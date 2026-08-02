@@ -1,0 +1,250 @@
+#ifndef LITEHTML_LAYOUT_H
+#define LITEHTML_LAYOUT_H
+
+// litehtml 纯 C 布局服务接口
+//
+// 本接口将 litehtml 的 C++ 布局能力以纯 C 形式暴露，用于跨 DLL 边界集成：
+//   - 插件（宿主）实现 litehtml_layout_callbacks 回调结构，传入布局服务
+//   - 布局服务在布局过程中调用这些回调，产出绘制数据
+//   - 绘制指令（FCommand）等高层契约由插件侧定义，不在此接口内
+//
+// 线程约定：布局服务实例非线程安全，应由宿主单线程（逻辑线程）串行使用。
+
+#include "litehtml_export.h"
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------------ */
+/* 轻量纯 C 结构（跨 DLL 边界安全，仅标量）                              */
+/* ------------------------------------------------------------------ */
+
+typedef struct litehtml_color
+{
+    uint8_t r, g, b, a; // 0-255
+} litehtml_color;
+
+typedef struct litehtml_rect
+{
+    float x;
+    float y;
+    float width;
+    float height;
+} litehtml_rect;
+
+typedef struct litehtml_size
+{
+    float width;
+    float height;
+} litehtml_size;
+
+typedef struct litehtml_font_metrics
+{
+    float font_size;
+    float height;
+    float ascent;
+    float descent;
+    float x_height;
+    float ch_width;
+    float sub_shift;
+    float super_shift;
+    int   draw_spaces;
+} litehtml_font_metrics;
+
+typedef struct litehtml_font_description
+{
+    const char* family; // UTF-8
+    float       size;
+    int         style; // 见 litehtml_font_style_*
+    int         weight;
+    int         decoration_line;  // bitset
+    float       decoration_thickness;
+    int         decoration_style;
+    litehtml_color decoration_color;
+    const char* emphasis_style;   // UTF-8，可为 NULL
+    litehtml_color emphasis_color;
+    int         emphasis_position;
+} litehtml_font_description;
+
+/* 字体样式枚举（与 litehtml 对齐） */
+enum litehtml_font_style
+{
+    litehtml_font_style_normal = 0,
+    litehtml_font_style_italic = 1,
+    litehtml_font_style_oblique = 2,
+};
+
+/* 列表标记类型（子集，随 litehtml） */
+enum litehtml_list_style_type
+{
+    litehtml_list_style_none = 0,
+    litehtml_list_style_circle = 1,
+    litehtml_list_style_disc = 2,
+    litehtml_list_style_square = 3,
+    litehtml_list_style_decimal = 4,
+};
+
+typedef struct litehtml_list_marker
+{
+    const char*     image;      // 可为 NULL
+    const char*     baseurl;    // 可为 NULL
+    int             marker_type; // litehtml_list_style_type
+    litehtml_color  color;
+    litehtml_rect   pos;
+    int             index;
+    uint64_t        font;       // 字体句柄
+} litehtml_list_marker;
+
+typedef struct litehtml_border
+{
+    float          width;
+    litehtml_color color;
+    int            style;
+} litehtml_border;
+
+typedef struct litehtml_borders
+{
+    litehtml_border left;
+    litehtml_border top;
+    litehtml_border right;
+    litehtml_border bottom;
+    float           radius_top_left_x;
+    float           radius_top_left_y;
+    float           radius_top_right_x;
+    float           radius_top_right_y;
+    float           radius_bottom_right_x;
+    float           radius_bottom_right_y;
+    float           radius_bottom_left_x;
+    float           radius_bottom_left_y;
+} litehtml_borders;
+
+typedef struct litehtml_media_features
+{
+    float width;
+    float height;
+    float device_width;
+    float device_height;
+    int   color;
+    int   monochrome;
+    float resolution;
+} litehtml_media_features;
+
+/* 背景绘制层：仅暴露绘制边界矩形（对应 litehtml background_layer::border_box） */
+typedef struct litehtml_background_layer
+{
+    litehtml_rect border_box;
+} litehtml_background_layer;
+
+/* 线性渐变：stop.offset 为 0-1，start/end 是相对 background layer 的坐标。 */
+typedef struct litehtml_gradient_stop
+{
+    float          offset;
+    litehtml_color color;
+} litehtml_gradient_stop;
+
+typedef struct litehtml_linear_gradient
+{
+    float start_x, start_y;
+    float end_x, end_y;
+    const litehtml_gradient_stop* stops;
+    int stop_count;
+} litehtml_linear_gradient;
+
+/* ------------------------------------------------------------------ */
+/* 宿主回调表（等价 document_container 的纯 C 化）                       */
+/* ------------------------------------------------------------------ */
+
+typedef struct litehtml_layout_callbacks
+{
+    /* user 指针：回调的上下文（如插件对象） */
+    void* user;
+
+    /* 字体 */
+    void*  (*create_font)(const litehtml_font_description* descr, litehtml_font_metrics* fm, void* user);
+    void   (*delete_font)(void* hFont, void* user);
+    float  (*text_width)(const char* text, void* hFont, void* user);
+
+    /* 单位转换 */
+    float  (*pt_to_px)(float pt, void* user);
+    float  (*get_default_font_size)(void* user);
+    const char* (*get_default_font_name)(void* user);
+
+    /* 绘制 */
+    void (*draw_text)(const char* text, void* hFont, litehtml_color color,
+                      const litehtml_rect* pos, void* user);
+    void (*draw_solid_fill)(const litehtml_background_layer* layer, litehtml_color color, void* user);
+    void (*draw_borders)(const litehtml_borders* borders, const litehtml_rect* draw_pos, int root, void* user);
+    void (*draw_list_marker)(const litehtml_list_marker* marker, void* user);
+
+    /* 渐变 */
+    void (*draw_linear_gradient)(const litehtml_background_layer* layer, const litehtml_linear_gradient* gradient, void* user);
+    void (*draw_radial_gradient)(const litehtml_background_layer* layer, void* user);
+    void (*draw_conic_gradient)(const litehtml_background_layer* layer, void* user);
+
+    /* 图片 */
+    void (*load_image)(const char* src, const char* baseurl, int redraw_on_ready, void* user);
+    void (*get_image_size)(const char* src, const char* baseurl, litehtml_size* sz, void* user);
+    void (*draw_image)(const litehtml_background_layer* layer, const char* url, const char* base_url, void* user);
+
+    /* 视口 / 媒体 */
+    void (*get_viewport)(litehtml_rect* viewport, void* user);
+    void (*get_media_features)(litehtml_media_features* media, void* user);
+
+    /* 文档 / 事件 */
+    void (*set_caption)(const char* caption, void* user);
+    void (*set_base_url)(const char* base_url, void* user);
+    void (*on_anchor_click)(const char* url, void* user);
+    void (*on_mouse_event)(int event, void* user);
+    void (*set_cursor)(const char* cursor, void* user);
+    void (*transform_text)(char* text, int text_transform, void* user);
+    void (*import_css)(char* text, const char* url, char* baseurl, void* user);
+} litehtml_layout_callbacks;
+
+/* ------------------------------------------------------------------ */
+/* 布局服务（纯 C 入口）                                                */
+/* ------------------------------------------------------------------ */
+
+/* 不透明句柄：布局服务实例 */
+typedef struct litehtml_layout_service litehtml_layout_service;
+
+/* 布局模式（对应 litehtml render_type，顺序必须与 litehtml 一致） */
+enum litehtml_render_type
+{
+    litehtml_render_all = 0,          // litehtml::render_all
+    litehtml_render_no_fixed = 1,     // litehtml::render_no_fixed
+    litehtml_render_fixed_only = 2,   // litehtml::render_fixed_only
+};
+
+/* 创建布局服务。cb 为宿主回调（可静态存储，须在服务生命周期内有效）。
+   返回 NULL 表示创建失败。 */
+LITEHTML_API litehtml_layout_service* litehtml_layout_create(const litehtml_layout_callbacks* cb);
+
+/* 销毁布局服务。 */
+LITEHTML_API void litehtml_layout_destroy(litehtml_layout_service* service);
+
+/* 加载 HTML 字符串并设置视口。成功返回非 0。 */
+LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
+                                           const char* html,
+                                           const char* base_url,
+                                           float viewport_width,
+                                           float viewport_height);
+
+/* 触发布局。max_width 为布局最大宽度（<=0 时用视口宽）。 */
+LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
+                                        float max_width,
+                                        int render_type);
+
+/* 绘制。触发宿主回调产出绘制数据。 */
+LITEHTML_API void litehtml_layout_draw(litehtml_layout_service* service);
+
+/* 查询文档内容尺寸（布局后有效）。 */
+LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* service,
+                                                   litehtml_size* size);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // LITEHTML_LAYOUT_H

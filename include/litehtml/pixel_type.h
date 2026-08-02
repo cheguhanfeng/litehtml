@@ -116,9 +116,11 @@ namespace litehtml
         }
 
         // Comparison operators
+        // 注意: 使用自定义 constexpr 绝对值，避免 std::abs(float) 在 C++17/MSVC 下非 constexpr 导致 C3615。
         constexpr bool operator==(pixel_float_t other) const
         {
-            return std::abs(m_value - other.m_value) < epsilon;
+            const float diff = m_value - other.m_value;
+            return (diff < 0.0f ? -diff : diff) < epsilon;
         }
         constexpr bool operator!=(pixel_float_t other) const
         {

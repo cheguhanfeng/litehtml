@@ -80,6 +80,7 @@ set(SOURCE_LITEHTML
 	src/flex_line.cpp
 	src/background.cpp
 	src/gradient.cpp
+	src/litehtml_layout.cpp
 )
 
 set(HEADER_LITEHTML
@@ -153,6 +154,8 @@ set(HEADER_LITEHTML
 	include/litehtml/font_description.h
 	include/litehtml/scroll_view.h
 	include/litehtml/css_values.h
+	include/litehtml/litehtml_layout.h
+	include/litehtml/litehtml_export.h
 )
 
 find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
@@ -189,7 +192,19 @@ else()
 						)
 endif()
 
-add_library(${PROJECT_NAME} ${HEADER_LITEHTML} ${SOURCE_LITEHTML})
+# 共享库（DLL）选项：默认 ON，构建 litehtml 为动态库以支持 DLL 集成
+option(LITEHTML_BUILD_SHARED "Build litehtml as a shared library (DLL)" ON)
+
+if(LITEHTML_BUILD_SHARED)
+	add_library(${PROJECT_NAME} SHARED ${HEADER_LITEHTML} ${SOURCE_LITEHTML})
+	target_compile_definitions(${PROJECT_NAME} PRIVATE LITEHTML_BUILD_DLL)
+	set_target_properties(${PROJECT_NAME} PROPERTIES
+		WINDOWS_EXPORT_ALL_SYMBOLS OFF
+		)
+else()
+	add_library(${PROJECT_NAME} ${HEADER_LITEHTML} ${SOURCE_LITEHTML})
+endif()
+
 set_target_properties(${PROJECT_NAME} PROPERTIES
 	VERSION ${PROJECT_LIB_VERSION}
 	SOVERSION ${PROJECT_SO_VERSION}
