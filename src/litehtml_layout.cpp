@@ -557,10 +557,15 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
     service->viewport_h = viewport_height;
 
     std::string base = base_url ? base_url : "";
+    // Browsers paint the document canvas to the viewport even when body content is
+    // shorter.  Without this rule litehtml correctly sizes body to its content, but
+    // the host widget's background becomes visible below a short JS page.
+    static constexpr char viewport_canvas_styles[] = "html, body { min-height: 100vh; }";
     service->doc = litehtml::document::createFromString(
         litehtml::estring(html),
         &service->container,
-        litehtml::master_css);
+        litehtml::master_css,
+        viewport_canvas_styles);
     return service->doc ? 1 : 0;
 }
 
@@ -662,6 +667,17 @@ LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_
     element->text_cache.clear();
     element->element->get_text(element->text_cache);
     return element->text_cache.c_str();
+}
+
+LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect)
+{
+    if(!element || !element->element || !out_rect) return 0;
+    const auto placement = element->element->get_placement();
+    out_rect->x = placement.x;
+    out_rect->y = placement.y;
+    out_rect->width = placement.width;
+    out_rect->height = placement.height;
+    return 1;
 }
 
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html)

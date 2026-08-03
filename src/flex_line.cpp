@@ -337,7 +337,7 @@ void litehtml::flex_line::init(pixel_t container_main_size, bool fit_container, 
 {
     if(!fit_container)
     {
-        distribute_free_space(container_main_size);
+        distribute_free_space(container_main_size - gap_size * static_cast<int>(items.size() - 1));
     }
 
     cross_size = 0;
@@ -433,9 +433,12 @@ void litehtml::flex_line::init(pixel_t container_main_size, bool fit_container, 
             main_size += item->el->width();
         }
 
+        main_size += gap_size * static_cast<int>(items.size() - 1);
+
         cross_size = std::max(first_baseline_bottom.value() - first_baseline_top.value(),
                               last_baseline_bottom.value() - last_baseline_top.value());
         cross_size = std::max(cross_size, non_baseline_height);
+
         if(!max_cross_size.is_default() && cross_size > max_cross_size)
         {
             cross_size = max_cross_size;
@@ -474,6 +477,7 @@ void litehtml::flex_line::init(pixel_t container_main_size, bool fit_container, 
             main_size  += item->el->height();
             cross_size  = std::max(cross_size, item->el->width());
         }
+        main_size += gap_size * static_cast<int>(items.size() - 1);
         if(!max_cross_size.is_default() && cross_size > max_cross_size)
         {
             cross_size = max_cross_size;
@@ -576,8 +580,9 @@ litehtml::pixel_t litehtml::flex_line::calculate_items_position(pixel_t         
     pixel_t height = 0_px;
 
     pixel_t distribute_step = 1_px;
-    for(auto& item : items)
+    for(auto it = items.begin(); it != items.end(); ++it)
     {
+        auto& item = *it;
         main_pos += add_before_item;
         if(add_before_item > 0_px && item_remainder > 0_px)
         {
@@ -586,6 +591,10 @@ litehtml::pixel_t litehtml::flex_line::calculate_items_position(pixel_t         
         }
         item->place(*this, main_pos, self_size, fmt_ctx);
         main_pos += item->get_el_main_size() + add_after_item;
+        if(std::next(it) != items.end())
+        {
+            main_pos += gap_size;
+        }
         if(add_after_item > 0_px && item_remainder > 0_px)
         {
             main_pos       += distribute_step;

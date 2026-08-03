@@ -592,6 +592,10 @@ void litehtml::css_properties::compute_flex(const html_tag* el, const document::
             el->get_property<int>(_align_items_, false, flex_align_items_normal, offset(m_flex_align_items)));
         m_flex_align_content = static_cast<flex_align_content>(
             el->get_property<int>(_align_content_, false, flex_align_content_stretch, offset(m_flex_align_content)));
+        m_row_gap = el->get_property<css_length>(_row_gap_, false, 0, offset(m_row_gap));
+        m_column_gap = el->get_property<css_length>(_column_gap_, false, 0, offset(m_column_gap));
+        doc->cvt_units(m_row_gap, m_font_metrics, 0_px);
+        doc->cvt_units(m_column_gap, m_font_metrics, 0_px);
     }
     m_flex_align_self = static_cast<flex_align_items>(
         el->get_property<int>(_align_self_, false, flex_align_items_auto, offset(m_flex_align_self)));

@@ -99,6 +99,7 @@ namespace litehtml
 
         {_flex_,            {_flex_grow_, _flex_shrink_, _flex_basis_}                                                },
         {_flex_flow_,       {_flex_direction_, _flex_wrap_}                                                           },
+        {_gap_,             {_row_gap_, _column_gap_}                                                                 },
 
         {_text_decoration_,
          {_text_decoration_color_, _text_decoration_line_, _text_decoration_style_, _text_decoration_thickness_}      },
@@ -263,6 +264,11 @@ namespace litehtml
         // <length-percentage>  https://developer.mozilla.org/en-US/docs/Web/CSS/text-indent#formal_syntax
         case _text_indent_:
             return add_length_property(name, val, css_values(), f_length_percentage, important);
+
+        // <length-percentage [0,∞)>  https://www.w3.org/TR/css-align-3/#gap-shorthand
+        case _row_gap_:
+        case _column_gap_:
+            return add_length_property(name, val, css_values(), f_length_percentage | f_positive, important);
 
         // <length-percentage [0,∞]>  https://developer.mozilla.org/en-US/docs/Web/CSS/padding-left
         case _padding_left_:
@@ -459,6 +465,15 @@ namespace litehtml
             {
                 add_parsed_property(__litehtml_border_spacing_x_, property_value(len[0], important));
                 add_parsed_property(__litehtml_border_spacing_y_, property_value(len[1], important));
+            }
+            break;
+
+        // gap = <row-gap> <column-gap>?
+        case _gap_:
+            if(parse_two_lengths(value, len, f_length_percentage | f_positive))
+            {
+                add_parsed_property(_row_gap_, property_value(len[0], important));
+                add_parsed_property(_column_gap_, property_value(len[1], important));
             }
             break;
 

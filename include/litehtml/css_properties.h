@@ -92,6 +92,8 @@ namespace litehtml
         flex_align_items     m_flex_align_items     = flex_align_items_stretch;
         flex_align_items     m_flex_align_self      = flex_align_items_auto;
         flex_align_content   m_flex_align_content   = flex_align_content_stretch;
+        css_length           m_row_gap;
+        css_length           m_column_gap;
 
         caption_side m_caption_side = caption_side_top;
 
@@ -238,6 +240,8 @@ namespace litehtml
         flex_align_items     get_flex_align_items() const;
         flex_align_items     get_flex_align_self() const;
         flex_align_content   get_flex_align_content() const;
+        const css_length&    get_row_gap() const;
+        const css_length&    get_column_gap() const;
 
         int  get_order() const;
         void set_order(int order);
@@ -680,6 +684,16 @@ namespace litehtml
     inline flex_align_content css_properties::get_flex_align_content() const
     {
         return m_flex_align_content;
+    }
+
+    inline const css_length& css_properties::get_row_gap() const
+    {
+        return m_row_gap;
+    }
+
+    inline const css_length& css_properties::get_column_gap() const
+    {
+        return m_column_gap;
     }
 
     inline caption_side css_properties::get_caption_side() const

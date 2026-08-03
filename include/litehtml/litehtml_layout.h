@@ -259,6 +259,9 @@ LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* eleme
 LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name);
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value);
 LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_element* element);
+/* Border-box placement after litehtml_layout_render(). Returns 0 for an invalid
+   element or before a document has been rendered. */
+LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect);
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html);
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child);
 
