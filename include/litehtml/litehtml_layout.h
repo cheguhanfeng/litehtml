@@ -243,6 +243,25 @@ LITEHTML_API void litehtml_layout_draw(litehtml_layout_service* service);
 LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* service,
                                                    litehtml_size* size);
 
+/* ------------------------------------------------------------------ */
+/* Minimal DOM service. Element handles are owned by the caller and must
+   be released before destroying the layout service. All strings are UTF-8. */
+typedef struct litehtml_layout_element litehtml_layout_element;
+
+LITEHTML_API int litehtml_layout_get_script_count(litehtml_layout_service* service);
+LITEHTML_API const char* litehtml_layout_get_script(litehtml_layout_service* service, int index);
+LITEHTML_API const char* litehtml_layout_get_script_src(litehtml_layout_service* service, int index);
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_id(litehtml_layout_service* service, const char* id);
+LITEHTML_API litehtml_layout_element* litehtml_layout_query_selector(litehtml_layout_service* service, const char* selector);
+LITEHTML_API litehtml_layout_element* litehtml_layout_create_element(litehtml_layout_service* service, const char* tag);
+LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* element);
+LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name);
+LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value);
+LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_element* element);
+LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html);
+LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child);
+
 #ifdef __cplusplus
 }
 #endif

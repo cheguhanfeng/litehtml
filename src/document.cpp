@@ -1199,6 +1199,35 @@ namespace litehtml
         fix_tables_layout();
     }
 
+    bool document::append_child(const element::ptr& parent, const element::ptr& child)
+    {
+        if(!parent || !child || parent->get_document().get() != this || child->get_document().get() != this)
+        {
+            return false;
+        }
+
+        if(!parent->appendChild(child))
+        {
+            return false;
+        }
+
+        child->apply_stylesheet(m_master_css);
+        child->parse_attributes();
+        child->apply_stylesheet(m_styles);
+        child->apply_stylesheet(m_user_css);
+        child->compute_styles();
+
+        if(auto parent_render = parent->get_render_item())
+        {
+            if(auto child_render = child->create_render_item(parent_render))
+            {
+                parent_render->add_child(child_render->init());
+            }
+        }
+        fix_tables_layout();
+        return true;
+    }
+
     void document::dump(dumper& cout)
     {
         if(m_root_render)

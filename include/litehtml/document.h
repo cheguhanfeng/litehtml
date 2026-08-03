@@ -127,6 +127,8 @@ namespace litehtml
         }
 
         void append_children_from_string(element& parent, const char* str, bool replace_existing);
+        /** Attach a caller-created element and initialise its styles/render item. */
+        bool append_child(const std::shared_ptr<element>& parent, const std::shared_ptr<element>& child);
         void dump(dumper& cout);
 
         // see doc/document_createFromString.txt

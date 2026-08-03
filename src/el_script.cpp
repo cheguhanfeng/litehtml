@@ -11,6 +11,14 @@ void litehtml::el_script::parse_attributes()
     // TODO: pass script text to document container
 }
 
+void litehtml::el_script::set_attr(const char* name, const char* val)
+{
+    if(name && strcmp(name, "src") == 0)
+    {
+        m_src = val ? val : "";
+    }
+}
+
 bool litehtml::el_script::appendChild(const ptr& el)
 {
     el->get_text(m_text);

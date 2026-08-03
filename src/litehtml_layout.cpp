@@ -12,6 +12,7 @@
 #include "encodings.h"
 #include "font_description.h"
 #include "html.h"
+#include "el_script.h"
 #include "types.h"
 
 #include <cstring>
@@ -502,6 +503,31 @@ struct litehtml_layout_service
     float                       viewport_h = 0.f;
 };
 
+struct litehtml_layout_element
+{
+    litehtml_layout_service* service = nullptr;
+    litehtml::element::ptr element;
+    mutable std::string text_cache;
+};
+
+namespace
+{
+    litehtml_layout_element* MakeElementHandle(litehtml_layout_service* service, const litehtml::element::ptr& element)
+    {
+        if(!service || !element) return nullptr;
+        auto* handle = new litehtml_layout_element;
+        handle->service = service;
+        handle->element = element;
+        return handle;
+    }
+
+    void CollectScripts(const litehtml::element::ptr& element, std::vector<const litehtml::el_script*>& scripts)
+    {
+        if(auto* script = dynamic_cast<litehtml::el_script*>(element.get())) scripts.push_back(script);
+        for(const auto& child : element->children()) CollectScripts(child, scripts);
+    }
+}
+
 LITEHTML_API litehtml_layout_service* litehtml_layout_create(const litehtml_layout_callbacks* cb)
 {
     if(!cb)
@@ -571,4 +597,82 @@ LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* serv
     }
     litehtml::size s(service->doc->width(), service->doc->height());
     *size = ToCSize(s);
+}
+
+LITEHTML_API int litehtml_layout_get_script_count(litehtml_layout_service* service)
+{
+    if(!service || !service->doc) return 0;
+    std::vector<const litehtml::el_script*> scripts;
+    CollectScripts(service->doc->root(), scripts);
+    return static_cast<int>(scripts.size());
+}
+
+LITEHTML_API const char* litehtml_layout_get_script(litehtml_layout_service* service, int index)
+{
+    if(!service || !service->doc || index < 0) return nullptr;
+    std::vector<const litehtml::el_script*> scripts;
+    CollectScripts(service->doc->root(), scripts);
+    return index < static_cast<int>(scripts.size()) ? scripts[index]->text().c_str() : nullptr;
+}
+
+LITEHTML_API const char* litehtml_layout_get_script_src(litehtml_layout_service* service, int index)
+{
+    if(!service || !service->doc || index < 0) return nullptr;
+    std::vector<const litehtml::el_script*> scripts;
+    CollectScripts(service->doc->root(), scripts);
+    return index < static_cast<int>(scripts.size()) ? scripts[index]->src() : nullptr;
+}
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_id(litehtml_layout_service* service, const char* id)
+{
+    if(!service || !service->doc || !id) return nullptr;
+    return MakeElementHandle(service, service->doc->root()->select_one("#" + std::string(id)));
+}
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_query_selector(litehtml_layout_service* service, const char* selector)
+{
+    if(!service || !service->doc || !selector) return nullptr;
+    return MakeElementHandle(service, service->doc->root()->select_one(selector));
+}
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_create_element(litehtml_layout_service* service, const char* tag)
+{
+    if(!service || !service->doc || !tag) return nullptr;
+    return MakeElementHandle(service, service->doc->create_element(tag, {}));
+}
+
+LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* element) { delete element; }
+
+LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name)
+{
+    return element && element->element && name ? element->element->get_attr(name) : nullptr;
+}
+
+LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value)
+{
+    if(!element || !element->element || !name || !value) return 0;
+    element->element->set_attr(name, value);
+    element->element->compute_styles();
+    return 1;
+}
+
+LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_element* element)
+{
+    if(!element || !element->element) return nullptr;
+    element->text_cache.clear();
+    element->element->get_text(element->text_cache);
+    return element->text_cache.c_str();
+}
+
+LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html)
+{
+    if(!element || !element->service || !element->service->doc || !element->element || !html) return 0;
+    element->service->doc->append_children_from_string(*element->element, html, true);
+    return 1;
+}
+
+LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child)
+{
+    if(!parent || !child || parent->service != child->service || !parent->service || !parent->service->doc) return 0;
+    return parent->service->doc->append_child(parent->element, child->element) ? 1 : 0;
 }
