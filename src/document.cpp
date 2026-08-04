@@ -845,18 +845,24 @@ namespace litehtml
     }
 
     bool document::on_lbutton_up(pixel_t /*x*/, pixel_t /*y*/, pixel_t /*client_x*/, pixel_t /*client_y*/,
-                                 const std::function<void(const position&)>& redraw_box)
+                                 const std::function<void(const position&)>& redraw_box, bool activate_default)
     {
         if(!m_root || !m_root_render)
         {
             return false;
         }
-        if(m_over_element)
+        // :active belongs to the element that received mouse-down, not to the
+        // element currently under the physical pointer. This distinction is
+        // essential when a captured drag crosses another widget: CSS :hover
+        // follows the pointer, while the pressed element remains active until
+        // release/cancel. Only a release over that same element activates its
+        // native default action.
+        const auto active_element = m_active_element;
+        const bool is_click = activate_default && active_element && active_element == m_over_element;
+        m_active_element = nullptr;
+        if(active_element && active_element->on_lbutton_up(is_click))
         {
-            if(m_over_element->on_lbutton_up(m_active_element == m_over_element))
-            {
-                return m_root->find_styles_changes(redraw_box);
-            }
+            return m_root->find_styles_changes(redraw_box);
         }
         return false;
     }

@@ -108,7 +108,7 @@ namespace litehtml
         bool                         on_lbutton_down(pixel_t x, pixel_t y, pixel_t client_x, pixel_t client_y,
                                                      const std::function<void(const position&)>& redraw_box);
         bool                         on_lbutton_up(pixel_t x, pixel_t y, pixel_t client_x, pixel_t client_y,
-                                                   const std::function<void(const position&)>& redraw_box);
+                                                   const std::function<void(const position&)>& redraw_box, bool activate_default = true);
         bool                         on_button_cancel(const std::function<void(const position&)>& redraw_box);
         bool                         on_mouse_leave(const std::function<void(const position&)>& redraw_box);
         std::shared_ptr<element>     create_element(const char* tag_name, const string_map& attributes);

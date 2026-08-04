@@ -131,10 +131,18 @@ typedef struct litehtml_media_features
     float resolution;
 } litehtml_media_features;
 
-/* 背景绘制层：仅暴露绘制边界矩形（对应 litehtml background_layer::border_box） */
+/* 背景绘制层。圆角是 CSS 像素，按左上、右上、右下、左下顺序存储。 */
 typedef struct litehtml_background_layer
 {
     litehtml_rect border_box;
+    float          radius_top_left_x;
+    float          radius_top_left_y;
+    float          radius_top_right_x;
+    float          radius_top_right_y;
+    float          radius_bottom_right_x;
+    float          radius_bottom_right_y;
+    float          radius_bottom_left_x;
+    float          radius_bottom_left_y;
 } litehtml_background_layer;
 
 /* 线性渐变：stop.offset 为 0-1，start/end 是相对 background layer 的坐标。 */
@@ -259,11 +267,27 @@ LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* eleme
 LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name);
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value);
 LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_element* element);
+/* Stable only for the lifetime of the containing document generation. */
+LITEHTML_API uint64_t litehtml_layout_element_get_node_id(const litehtml_layout_element* element);
+LITEHTML_API const char* litehtml_layout_element_get_tag_name(const litehtml_layout_element* element);
+/* Caller owns the returned handle. Returns NULL for the document root. */
+LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const litehtml_layout_element* element);
 /* Border-box placement after litehtml_layout_render(). Returns 0 for an invalid
    element or before a document has been rendered. */
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect);
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html);
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child);
+
+/* Logic-thread-only interaction entry points. Coordinates are document CSS pixels.
+   They update litehtml's :hover/:active state and return non-zero when a repaint is needed. */
+LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service, float x, float y);
+LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service, float x, float y);
+LITEHTML_API int litehtml_layout_on_mouse_up(litehtml_layout_service* service, float x, float y);
+/* Same release transition but conditionally suppresses element click/default actions. */
+LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service, float x, float y, int activate_default);
+LITEHTML_API int litehtml_layout_on_mouse_cancel(litehtml_layout_service* service);
+/* The returned caller-owned handle is valid only while its service is alive. */
+LITEHTML_API litehtml_layout_element* litehtml_layout_hit_test(litehtml_layout_service* service, float x, float y);
 
 #ifdef __cplusplus
 }

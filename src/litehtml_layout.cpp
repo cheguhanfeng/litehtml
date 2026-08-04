@@ -13,9 +13,11 @@
 #include "font_description.h"
 #include "html.h"
 #include "el_script.h"
+#include "render_item.h"
 #include "types.h"
 
 #include <cstring>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -55,8 +57,16 @@ namespace
 
     inline litehtml_background_layer ToCLayer(const litehtml::background_layer& layer)
     {
-        litehtml_background_layer out;
+        litehtml_background_layer out{};
         out.border_box = ToCRect(layer.border_box);
+        out.radius_top_left_x = static_cast<float>(layer.border_radius.top_left_x);
+        out.radius_top_left_y = static_cast<float>(layer.border_radius.top_left_y);
+        out.radius_top_right_x = static_cast<float>(layer.border_radius.top_right_x);
+        out.radius_top_right_y = static_cast<float>(layer.border_radius.top_right_y);
+        out.radius_bottom_right_x = static_cast<float>(layer.border_radius.bottom_right_x);
+        out.radius_bottom_right_y = static_cast<float>(layer.border_radius.bottom_right_y);
+        out.radius_bottom_left_x = static_cast<float>(layer.border_radius.bottom_left_x);
+        out.radius_bottom_left_y = static_cast<float>(layer.border_radius.bottom_left_y);
         return out;
     }
 
@@ -501,6 +511,8 @@ struct litehtml_layout_service
     litehtml::document::ptr     doc;
     float                       viewport_w = 0.f;
     float                       viewport_h = 0.f;
+    uint64_t                    next_node_id = 1;
+    std::unordered_map<const litehtml::element*, uint64_t> node_ids;
 };
 
 struct litehtml_layout_element
@@ -519,6 +531,14 @@ namespace
         handle->service = service;
         handle->element = element;
         return handle;
+    }
+
+    uint64_t GetNodeId(litehtml_layout_service* service, const litehtml::element::ptr& element)
+    {
+        if(!service || !element) return 0;
+        const auto [it, inserted] = service->node_ids.emplace(element.get(), service->next_node_id);
+        if(inserted) ++service->next_node_id;
+        return it->second;
     }
 
     void CollectScripts(const litehtml::element::ptr& element, std::vector<const litehtml::el_script*>& scripts)
@@ -555,6 +575,8 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
     }
     service->viewport_w = viewport_width;
     service->viewport_h = viewport_height;
+    service->node_ids.clear();
+    service->next_node_id = 1;
 
     std::string base = base_url ? base_url : "";
     // Browsers paint the document canvas to the viewport even when body content is
@@ -669,6 +691,22 @@ LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_
     return element->text_cache.c_str();
 }
 
+LITEHTML_API uint64_t litehtml_layout_element_get_node_id(const litehtml_layout_element* element)
+{
+    return element ? GetNodeId(element->service, element->element) : 0;
+}
+
+LITEHTML_API const char* litehtml_layout_element_get_tag_name(const litehtml_layout_element* element)
+{
+    return element && element->element ? element->element->get_tagName() : nullptr;
+}
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const litehtml_layout_element* element)
+{
+    return element && element->service && element->element ? MakeElementHandle(element->service, element->element->parent())
+                                                           : nullptr;
+}
+
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect)
 {
     if(!element || !element->element || !out_rect) return 0;
@@ -691,4 +729,55 @@ LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* p
 {
     if(!parent || !child || parent->service != child->service || !parent->service || !parent->service->doc) return 0;
     return parent->service->doc->append_child(parent->element, child->element) ? 1 : 0;
+}
+
+namespace
+{
+    bool IgnoreRedrawBox(const litehtml::position&) { return false; }
+}
+
+LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service, float x, float y)
+{
+    if(!service || !service->doc) return 0;
+    return service->doc->on_mouse_over(litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
+                                       litehtml::pixel_t(y), IgnoreRedrawBox)
+               ? 1
+               : 0;
+}
+
+LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service, float x, float y)
+{
+    if(!service || !service->doc) return 0;
+    return service->doc->on_lbutton_down(litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
+                                         litehtml::pixel_t(y), IgnoreRedrawBox)
+               ? 1
+               : 0;
+}
+
+LITEHTML_API int litehtml_layout_on_mouse_up(litehtml_layout_service* service, float x, float y)
+{
+	return litehtml_layout_on_mouse_up_ex(service, x, y, 1);
+}
+
+LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service, float x, float y, int activate_default)
+{
+    if(!service || !service->doc) return 0;
+    return service->doc->on_lbutton_up(litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
+                                       litehtml::pixel_t(y), IgnoreRedrawBox, activate_default != 0)
+               ? 1
+               : 0;
+}
+
+LITEHTML_API int litehtml_layout_on_mouse_cancel(litehtml_layout_service* service)
+{
+    if(!service || !service->doc) return 0;
+    return service->doc->on_button_cancel(IgnoreRedrawBox) ? 1 : 0;
+}
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_hit_test(litehtml_layout_service* service, float x, float y)
+{
+    if(!service || !service->doc || !service->doc->root_render()) return nullptr;
+    return MakeElementHandle(service, service->doc->root_render()->get_element_by_point(
+                                          litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
+                                          litehtml::pixel_t(y), nullptr));
 }
