@@ -27,6 +27,7 @@ namespace litehtml
         margins                                   m_borders;
         position                                  m_pos;
         bool                                      m_skip = false;
+        std::string                               m_text_override;
         std::vector<std::shared_ptr<render_item>> m_positioned;
         std::shared_ptr<scroll_view>              m_scroll_view;
 
@@ -114,6 +115,16 @@ namespace litehtml
         void skip(bool val)
         {
             m_skip = val;
+        }
+
+        void set_text_override(std::string text)
+        {
+            m_text_override = std::move(text);
+        }
+
+        const std::string& text_override() const
+        {
+            return m_text_override;
         }
 
         pixel_t right() const

@@ -67,6 +67,19 @@ litehtml::rendered_width litehtml::render_item_inline_context::_render_content(
 
     finish_last_box(true, self_size);
 
+    const int line_clamp = css().get_webkit_line_clamp();
+    if(css().get_display() == display_webkit_box && css().get_webkit_box_orient() == "vertical" &&
+       css().get_overflow() == overflow_hidden && line_clamp > 0 &&
+       m_line_boxes.size() > static_cast<size_t>(line_clamp))
+    {
+        for(size_t index = static_cast<size_t>(line_clamp); index < m_line_boxes.size(); ++index)
+        {
+            m_line_boxes[index]->hide();
+        }
+        m_line_boxes.resize(static_cast<size_t>(line_clamp));
+        m_line_boxes.back()->add_ellipsis();
+    }
+
     if(!m_line_boxes.empty())
     {
         if(collapse_top_margin())

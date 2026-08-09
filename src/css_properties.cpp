@@ -289,6 +289,8 @@ void litehtml::css_properties::compute(const html_tag* el, const document::ptr& 
     {
         m_backdrop_filter = el->get_property<std::string>(__webkit_backdrop_filter_, false, "", offset(m_backdrop_filter));
     }
+    m_webkit_line_clamp = el->get_property<int>(__webkit_line_clamp_, false, 0, offset(m_webkit_line_clamp));
+    m_webkit_box_orient = el->get_property<std::string>(__webkit_box_orient_, false, "", offset(m_webkit_box_orient));
 
     compute_background(el, doc);
     compute_flex(el, doc);

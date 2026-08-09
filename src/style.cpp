@@ -579,6 +579,20 @@ namespace litehtml
             }
             break;
 
+        case __webkit_line_clamp_:
+            if(val.type == NUMBER && val.n.number_type == css_number_integer && val.n.number >= 0)
+            {
+                add_parsed_property(name, property_value(static_cast<int>(val.n.number), important));
+            }
+            break;
+
+        case __webkit_box_orient_:
+            if(!ident.empty())
+            {
+                add_parsed_property(name, property_value(ident, important));
+            }
+            break;
+
         case _grid_template_columns_:
         case _grid_template_rows_:
         case _backdrop_filter_:

@@ -90,6 +90,7 @@ namespace litehtml
         _flex_, _flex_flow_, _flex_direction_, _flex_wrap_, _justify_content_, _align_items_, _align_content_,
         _align_self_, _flex_grow_, _flex_shrink_, _flex_basis_, _gap_, _row_gap_, _column_gap_,
         _grid_template_columns_, _grid_template_rows_, _backdrop_filter_, __webkit_backdrop_filter_,
+        __webkit_line_clamp_, __webkit_box_orient_,
 
         _caption_side_, _order_,
 

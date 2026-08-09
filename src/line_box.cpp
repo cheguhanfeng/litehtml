@@ -2,6 +2,9 @@
 #include "line_box.h"
 #include "element.h"
 #include "render_item.h"
+#include "document.h"
+#include "document_container.h"
+#include "utf8_strings.h"
 #include "types.h"
 #include <algorithm>
 
@@ -166,6 +169,7 @@ litehtml::pixel_t litehtml::lbi_continue::width() const
 void litehtml::line_box::add_item(std::unique_ptr<line_box_item> item)
 {
     item->get_el()->skip(false);
+    item->get_el()->set_text_override({});
     bool add = true;
     switch(item->get_type())
     {
@@ -191,6 +195,72 @@ void litehtml::line_box::add_item(std::unique_ptr<line_box_item> item)
     {
         item->get_el()->skip(true);
     }
+}
+
+void litehtml::line_box::hide()
+{
+    for(auto& item : m_items)
+    {
+        // Inline start/continue/end markers can refer to a parent shared with a
+        // visible line. Only leaf paint items belong exclusively to this line.
+        if(item->get_type() == line_box_item::type_text_part)
+        {
+            item->get_el()->skip(true);
+        }
+    }
+}
+
+bool litehtml::line_box::add_ellipsis()
+{
+    // Generated ellipsis belongs to the last visible text run. Keeping it as a
+    // paint override avoids mutating the DOM while still using the run's font.
+    for(auto it = m_items.rbegin(); it != m_items.rend(); ++it)
+    {
+        auto& render = (*it)->get_el();
+        if((*it)->get_type() != line_box_item::type_text_part)
+        {
+            continue;
+        }
+        if(!render->src_el()->is_text() || render->src_el()->is_white_space())
+        {
+            render->skip(true);
+            continue;
+        }
+
+        std::string text;
+        render->src_el()->get_text(text);
+        auto parent = render->src_el()->parent();
+        if(!parent)
+        {
+            render->skip(true);
+            continue;
+        }
+
+        const auto font = parent->css().get_font();
+        auto container = render->src_el()->get_document()->container();
+        const pixel_t available = std::max(0_px, m_right - (*it)->left());
+        std::string candidate = text + "...";
+        pixel_t width = container->text_width(candidate.c_str(), font);
+        while(!text.empty() && width > available)
+        {
+            int end = static_cast<int>(text.size());
+            prev_utf8_char(text, end);
+            text.resize(static_cast<size_t>(end));
+            candidate = text + "...";
+            width = container->text_width(candidate.c_str(), font);
+        }
+
+        if(width <= available)
+        {
+            render->set_text_override(candidate);
+            render->pos().width = width;
+            render->skip(false);
+            m_width = (*it)->left() - m_left + width;
+            return true;
+        }
+        render->skip(true);
+    }
+    return false;
 }
 
 litehtml::pixel_t litehtml::line_box::calc_va_baseline(const va_context& current, vertical_align va,

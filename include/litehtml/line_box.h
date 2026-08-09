@@ -244,6 +244,8 @@ namespace litehtml
         pixel_t top_margin() const;
         pixel_t bottom_margin() const;
         void    y_shift(pixel_t shift);
+        void    hide();
+        bool    add_ellipsis();
 
         std::list<std::unique_ptr<line_box_item>>  finish(bool                            last_box,
                                                           const containing_block_context& containing_block_size);

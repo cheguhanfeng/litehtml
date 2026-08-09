@@ -97,6 +97,8 @@ namespace litehtml
         std::string          m_grid_template_columns;
         std::string          m_grid_template_rows;
         std::string          m_backdrop_filter;
+        int                  m_webkit_line_clamp = 0;
+        std::string          m_webkit_box_orient;
 
         caption_side m_caption_side = caption_side_top;
 
@@ -248,6 +250,8 @@ namespace litehtml
         const std::string&   get_grid_template_columns() const;
         const std::string&   get_grid_template_rows() const;
         const std::string&   get_backdrop_filter() const;
+        int                  get_webkit_line_clamp() const;
+        const std::string&   get_webkit_box_orient() const;
 
         int  get_order() const;
         void set_order(int order);
@@ -705,6 +709,8 @@ namespace litehtml
     inline const std::string& css_properties::get_grid_template_columns() const { return m_grid_template_columns; }
     inline const std::string& css_properties::get_grid_template_rows() const { return m_grid_template_rows; }
     inline const std::string& css_properties::get_backdrop_filter() const { return m_backdrop_filter; }
+    inline int css_properties::get_webkit_line_clamp() const { return m_webkit_line_clamp; }
+    inline const std::string& css_properties::get_webkit_box_orient() const { return m_webkit_box_orient; }
 
     inline caption_side css_properties::get_caption_side() const
     {
