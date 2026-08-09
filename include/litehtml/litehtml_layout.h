@@ -160,6 +160,14 @@ typedef struct litehtml_linear_gradient
     int stop_count;
 } litehtml_linear_gradient;
 
+typedef struct litehtml_radial_gradient
+{
+    float center_x, center_y;
+    float radius_x, radius_y;
+    const litehtml_gradient_stop* stops;
+    int stop_count;
+} litehtml_radial_gradient;
+
 /* ------------------------------------------------------------------ */
 /* 宿主回调表（等价 document_container 的纯 C 化）                       */
 /* ------------------------------------------------------------------ */
@@ -188,7 +196,7 @@ typedef struct litehtml_layout_callbacks
 
     /* 渐变 */
     void (*draw_linear_gradient)(const litehtml_background_layer* layer, const litehtml_linear_gradient* gradient, void* user);
-    void (*draw_radial_gradient)(const litehtml_background_layer* layer, void* user);
+    void (*draw_radial_gradient)(const litehtml_background_layer* layer, const litehtml_radial_gradient* gradient, void* user);
     void (*draw_conic_gradient)(const litehtml_background_layer* layer, void* user);
 
     /* 图片 */
@@ -208,6 +216,18 @@ typedef struct litehtml_layout_callbacks
     void (*set_cursor)(const char* cursor, void* user);
     void (*transform_text)(char* text, int text_transform, void* user);
     void (*import_css)(char* text, const char* url, char* baseurl, void* user);
+    /* Extended anchor notification. Kept at the end for source compatibility
+       with hosts that only implement on_anchor_click. target is never NULL. */
+    void (*on_anchor_click_ex)(const char* url, const char* target, void* user);
+
+    /* Paint-time clipping. Calls are balanced and may be nested. The clip uses
+       the same border-box/radius representation as a background layer. */
+    void (*push_clip)(const litehtml_background_layer* clip, void* user);
+    void (*pop_clip)(void* user);
+
+    /* Backdrop filter. Emitted before the element's own background layers so
+       the host can blur content already painted behind its border box. */
+    void (*draw_backdrop_blur)(const litehtml_background_layer* layer, float radius, void* user);
 } litehtml_layout_callbacks;
 
 /* ------------------------------------------------------------------ */
@@ -216,6 +236,7 @@ typedef struct litehtml_layout_callbacks
 
 /* 不透明句柄：布局服务实例 */
 typedef struct litehtml_layout_service litehtml_layout_service;
+typedef struct litehtml_layout_element litehtml_layout_element;
 
 /* 布局模式（对应 litehtml render_type，顺序必须与 litehtml 一致） */
 enum litehtml_render_type
@@ -243,6 +264,12 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
 LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
                                         float max_width,
                                         int render_type);
+/* Re-layout the changed subtree when safe. Normal-flow and structural edits
+   transparently use the document render fallback to preserve CSS correctness. */
+LITEHTML_API int litehtml_layout_render_dirty(litehtml_layout_service* service,
+                                              litehtml_layout_element* changed_root,
+                                              float max_width,
+                                              int render_type);
 
 /* 绘制。触发宿主回调产出绘制数据。 */
 LITEHTML_API void litehtml_layout_draw(litehtml_layout_service* service);
@@ -250,6 +277,21 @@ LITEHTML_API void litehtml_layout_draw(litehtml_layout_service* service);
 /* 查询文档内容尺寸（布局后有效）。 */
 LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* service,
                                                    litehtml_size* size);
+
+/* 前向声明（scroll API 位于 DOM service 类型定义之前）。 */
+/* ------------------------------------------------------------------ */
+/* 页面滚动（宿主维护滚动偏移，draw 时应用负偏移实现视口滚动）           */
+/* ------------------------------------------------------------------ */
+
+/* 设置页面滚动偏移（像素，自动 clamp 到 [0, content - viewport]）。 */
+LITEHTML_API void litehtml_layout_set_scroll(litehtml_layout_service* service, float x, float y);
+/* 按增量滚动（滚轮等），自动 clamp。 */
+LITEHTML_API void litehtml_layout_scroll_by(litehtml_layout_service* service, float dx, float dy);
+/* 滚动到指定元素（元素顶部对齐视口顶部）。 */
+LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, litehtml_layout_element* element);
+/* 查询当前滚动偏移。 */
+LITEHTML_API float litehtml_layout_get_scroll_x(litehtml_layout_service* service);
+LITEHTML_API float litehtml_layout_get_scroll_y(litehtml_layout_service* service);
 
 /* ------------------------------------------------------------------ */
 /* Minimal DOM service. Element handles are owned by the caller and must
@@ -266,6 +308,8 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_create_element(litehtml_la
 LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* element);
 LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name);
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value);
+/* Removes an attribute (needed for boolean form attributes such as checked). */
+LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_element* element, const char* name);
 LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_element* element);
 /* Stable only for the lifetime of the containing document generation. */
 LITEHTML_API uint64_t litehtml_layout_element_get_node_id(const litehtml_layout_element* element);
@@ -277,6 +321,10 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const l
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect);
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html);
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child);
+/* Returns caller-owned handles for elements whose tag name matches tag (ASCII case-insensitive).
+   The count is stable for the current document generation only. */
+LITEHTML_API int litehtml_layout_get_elements_by_tag_count(litehtml_layout_service* service, const char* tag);
+LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_tag(litehtml_layout_service* service, const char* tag, int index);
 
 /* Logic-thread-only interaction entry points. Coordinates are document CSS pixels.
    They update litehtml's :hover/:active state and return non-zero when a repaint is needed. */

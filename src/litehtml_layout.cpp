@@ -8,6 +8,7 @@
 #include "litehtml_layout.h"
 
 #include "document.h"
+#include "html_tag.h"
 #include "document_container.h"
 #include "encodings.h"
 #include "font_description.h"
@@ -92,6 +93,37 @@ namespace
         out.stops = out_stops.empty() ? nullptr : out_stops.data();
         out.stop_count = static_cast<int>(out_stops.size());
         return out;
+    }
+
+    inline litehtml_background_layer ToCClip(const litehtml::position& pos,
+                                             const litehtml::border_radiuses& radius)
+    {
+        litehtml_background_layer out{};
+        out.border_box = ToCRect(pos);
+        out.radius_top_left_x = static_cast<float>(radius.top_left_x);
+        out.radius_top_left_y = static_cast<float>(radius.top_left_y);
+        out.radius_top_right_x = static_cast<float>(radius.top_right_x);
+        out.radius_top_right_y = static_cast<float>(radius.top_right_y);
+        out.radius_bottom_right_x = static_cast<float>(radius.bottom_right_x);
+        out.radius_bottom_right_y = static_cast<float>(radius.bottom_right_y);
+        out.radius_bottom_left_x = static_cast<float>(radius.bottom_left_x);
+        out.radius_bottom_left_y = static_cast<float>(radius.bottom_left_y);
+        return out;
+    }
+
+    inline litehtml_radial_gradient ToCRadialGradient(
+        const litehtml::background_layer::radial_gradient& gradient,
+        std::vector<litehtml_gradient_stop>& out_stops)
+    {
+        out_stops.clear();
+        out_stops.reserve(gradient.color_points.size());
+        for(const auto& point : gradient.color_points)
+        {
+            out_stops.push_back({point.offset, ToCColor(point.color)});
+        }
+        return {static_cast<float>(gradient.position.x), static_cast<float>(gradient.position.y),
+                static_cast<float>(gradient.radius.x), static_cast<float>(gradient.radius.y),
+                out_stops.empty() ? nullptr : out_stops.data(), static_cast<int>(out_stops.size())};
     }
 
     inline litehtml_size ToCSize(const litehtml::size& s)
@@ -325,7 +357,9 @@ namespace litehtml
             if(m_cb && m_cb->draw_radial_gradient)
             {
                 litehtml_background_layer cl = ToCLayer(layer);
-                m_cb->draw_radial_gradient(&cl, user());
+                std::vector<litehtml_gradient_stop> stops;
+                litehtml_radial_gradient cg = ToCRadialGradient(gradient, stops);
+                m_cb->draw_radial_gradient(&cl, &cg, user());
             }
         }
 
@@ -437,6 +471,22 @@ namespace litehtml
             {
                 m_cb->on_anchor_click(url, user());
             }
+            if(m_cb && m_cb->on_anchor_click_ex)
+            {
+                const char* target = el ? el->get_attr("target", "") : "";
+                m_cb->on_anchor_click_ex(url, target ? target : "", user());
+            }
+        }
+
+        void draw_backdrop_filter(litehtml::uint_ptr hdc, const litehtml::background_layer& layer,
+                                  float blur_radius) override
+        {
+            (void)hdc;
+            if(m_cb && m_cb->draw_backdrop_blur && blur_radius > 0)
+            {
+                litehtml_background_layer cl = ToCLayer(layer);
+                m_cb->draw_backdrop_blur(&cl, blur_radius, user());
+            }
         }
 
         void on_mouse_event(const litehtml::element::ptr& el, litehtml::mouse_event event) override
@@ -484,10 +534,19 @@ namespace litehtml
 
         void set_clip(const litehtml::position& pos, const litehtml::border_radiuses& bdr_radius) override
         {
+            if(m_cb && m_cb->push_clip)
+            {
+                const litehtml_background_layer clip = ToCClip(pos, bdr_radius);
+                m_cb->push_clip(&clip, user());
+            }
         }
 
         void del_clip() override
         {
+            if(m_cb && m_cb->pop_clip)
+            {
+                m_cb->pop_clip(user());
+            }
         }
 
         litehtml::element::ptr create_element(const char* tag_name, const litehtml::string_map& attributes,
@@ -511,6 +570,8 @@ struct litehtml_layout_service
     litehtml::document::ptr     doc;
     float                       viewport_w = 0.f;
     float                       viewport_h = 0.f;
+    float                       scroll_x = 0.f;
+    float                       scroll_y = 0.f;
     uint64_t                    next_node_id = 1;
     std::unordered_map<const litehtml::element*, uint64_t> node_ids;
 };
@@ -575,6 +636,8 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
     }
     service->viewport_w = viewport_width;
     service->viewport_h = viewport_height;
+    service->scroll_x = 0.f;
+    service->scroll_y = 0.f;
     service->node_ids.clear();
     service->next_node_id = 1;
 
@@ -606,13 +669,79 @@ LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
     return 1;
 }
 
+LITEHTML_API int litehtml_layout_render_dirty(litehtml_layout_service* service,
+                                              litehtml_layout_element* changed_root,
+                                              float max_width,
+                                              int render_type)
+{
+    if(!service || !service->doc || !changed_root || changed_root->service != service || !changed_root->element)
+    {
+        return 0;
+    }
+    const litehtml::pixel_t mw = max_width > 0.f ? static_cast<litehtml::pixel_t>(max_width)
+                                                   : static_cast<litehtml::pixel_t>(service->viewport_w);
+    service->doc->render_dirty(changed_root->element, mw, static_cast<litehtml::render_type>(render_type));
+    return 1;
+}
+
 LITEHTML_API void litehtml_layout_draw(litehtml_layout_service* service)
 {
     if(!service || !service->doc)
     {
         return;
     }
-    service->doc->draw(0, 0, 0, nullptr);
+    // 页面滚动：draw 的 x/y 偏移加到每个元素位置，传入负滚动偏移实现视口滚动。
+    service->doc->draw(0, -static_cast<litehtml::pixel_t>(service->scroll_x),
+                          -static_cast<litehtml::pixel_t>(service->scroll_y), nullptr);
+}
+
+namespace
+{
+    void ClampScroll(litehtml_layout_service* service)
+    {
+        if(!service || !service->doc) return;
+        const float content_w = static_cast<float>(service->doc->width());
+        const float content_h = static_cast<float>(service->doc->height());
+        const float max_x = content_w - service->viewport_w;
+        const float max_y = content_h - service->viewport_h;
+        service->scroll_x = max_x > 0.f ? std::max(0.f, std::min(service->scroll_x, max_x)) : 0.f;
+        service->scroll_y = max_y > 0.f ? std::max(0.f, std::min(service->scroll_y, max_y)) : 0.f;
+    }
+}
+
+LITEHTML_API void litehtml_layout_set_scroll(litehtml_layout_service* service, float x, float y)
+{
+    if(!service) return;
+    service->scroll_x = x;
+    service->scroll_y = y;
+    ClampScroll(service);
+}
+
+LITEHTML_API void litehtml_layout_scroll_by(litehtml_layout_service* service, float dx, float dy)
+{
+    if(!service) return;
+    service->scroll_x += dx;
+    service->scroll_y += dy;
+    ClampScroll(service);
+}
+
+LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, litehtml_layout_element* element)
+{
+    if(!service || !element || !element->element) return;
+    const auto placement = element->element->get_placement();
+    // 目标元素顶部对齐视口顶部（保留少量边距）。
+    service->scroll_y = static_cast<float>(placement.y) - 8.f;
+    ClampScroll(service);
+}
+
+LITEHTML_API float litehtml_layout_get_scroll_x(litehtml_layout_service* service)
+{
+    return service ? service->scroll_x : 0.f;
+}
+
+LITEHTML_API float litehtml_layout_get_scroll_y(litehtml_layout_service* service)
+{
+    return service ? service->scroll_y : 0.f;
 }
 
 LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* service,
@@ -679,7 +808,17 @@ LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* 
 {
     if(!element || !element->element || !name || !value) return 0;
     element->element->set_attr(name, value);
-    element->element->compute_styles();
+    return 1;
+}
+
+LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_element* element, const char* name)
+{
+    if(!element || !element->element || !name) return 0;
+    // litehtml models attributes as strings.  Erasing the source attribute is
+    // important for HTML boolean attributes: checked="false" is still checked.
+    auto tag = std::dynamic_pointer_cast<litehtml::html_tag>(element->element);
+    if(!tag) return 0;
+    if(!tag->remove_attr(name)) return 0;
     return 1;
 }
 
@@ -722,25 +861,70 @@ LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element*
 {
     if(!element || !element->service || !element->service->doc || !element->element || !html) return 0;
     element->service->doc->append_children_from_string(*element->element, html, true);
+    // Child nodes and display:none transitions can change the render-tree shape.
+    element->service->doc->invalidate_styles();
     return 1;
 }
 
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child)
 {
     if(!parent || !child || parent->service != child->service || !parent->service || !parent->service->doc) return 0;
-    return parent->service->doc->append_child(parent->element, child->element) ? 1 : 0;
+    const bool appended = parent->service->doc->append_child(parent->element, child->element);
+    if(appended) parent->service->doc->invalidate_styles();
+    return appended ? 1 : 0;
+}
+
+namespace
+{
+    void CollectElementsByTag(const litehtml::element::ptr& element, const std::string& tag,
+        std::vector<litehtml::element::ptr>& result)
+    {
+        if(!element) return;
+        const char* tag_name = element->get_tagName();
+        if(tag_name && litehtml::lowcase(tag_name) == tag) result.push_back(element);
+        for(const auto& child : element->children()) CollectElementsByTag(child, tag, result);
+    }
+}
+
+LITEHTML_API int litehtml_layout_get_elements_by_tag_count(litehtml_layout_service* service, const char* tag)
+{
+    if(!service || !service->doc || !tag) return 0;
+    std::vector<litehtml::element::ptr> elements;
+    CollectElementsByTag(service->doc->root(), litehtml::lowcase(tag), elements);
+    return static_cast<int>(elements.size());
+}
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_tag(litehtml_layout_service* service, const char* tag, int index)
+{
+    if(!service || !service->doc || !tag || index < 0) return nullptr;
+    std::vector<litehtml::element::ptr> elements;
+    CollectElementsByTag(service->doc->root(), litehtml::lowcase(tag), elements);
+    return index < static_cast<int>(elements.size()) ? MakeElementHandle(service, elements[index]) : nullptr;
 }
 
 namespace
 {
     bool IgnoreRedrawBox(const litehtml::position&) { return false; }
+
+    // Input arrives in viewport coordinates, while litehtml's render tree is
+    // positioned in document coordinates. draw() applies the inverse offset
+    // (-scroll_x, -scroll_y), so interactions must apply the matching positive
+    // offset before hit testing or updating :hover/:active state.
+    litehtml::position DocumentPoint(const litehtml_layout_service* service, float x, float y)
+    {
+        return litehtml::position(
+            litehtml::pixel_t(x + service->scroll_x),
+            litehtml::pixel_t(y + service->scroll_y),
+            0,
+            0);
+    }
 }
 
 LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service, float x, float y)
 {
     if(!service || !service->doc) return 0;
-    return service->doc->on_mouse_over(litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
-                                       litehtml::pixel_t(y), IgnoreRedrawBox)
+    const auto point = DocumentPoint(service, x, y);
+    return service->doc->on_mouse_over(point.x, point.y, point.x, point.y, IgnoreRedrawBox)
                ? 1
                : 0;
 }
@@ -748,8 +932,8 @@ LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service,
 LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service, float x, float y)
 {
     if(!service || !service->doc) return 0;
-    return service->doc->on_lbutton_down(litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
-                                         litehtml::pixel_t(y), IgnoreRedrawBox)
+    const auto point = DocumentPoint(service, x, y);
+    return service->doc->on_lbutton_down(point.x, point.y, point.x, point.y, IgnoreRedrawBox)
                ? 1
                : 0;
 }
@@ -762,8 +946,8 @@ LITEHTML_API int litehtml_layout_on_mouse_up(litehtml_layout_service* service, f
 LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service, float x, float y, int activate_default)
 {
     if(!service || !service->doc) return 0;
-    return service->doc->on_lbutton_up(litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
-                                       litehtml::pixel_t(y), IgnoreRedrawBox, activate_default != 0)
+    const auto point = DocumentPoint(service, x, y);
+    return service->doc->on_lbutton_up(point.x, point.y, point.x, point.y, IgnoreRedrawBox, activate_default != 0)
                ? 1
                : 0;
 }
@@ -777,7 +961,7 @@ LITEHTML_API int litehtml_layout_on_mouse_cancel(litehtml_layout_service* servic
 LITEHTML_API litehtml_layout_element* litehtml_layout_hit_test(litehtml_layout_service* service, float x, float y)
 {
     if(!service || !service->doc || !service->doc->root_render()) return nullptr;
+    const auto point = DocumentPoint(service, x, y);
     return MakeElementHandle(service, service->doc->root_render()->get_element_by_point(
-                                          litehtml::pixel_t(x), litehtml::pixel_t(y), litehtml::pixel_t(x),
-                                          litehtml::pixel_t(y), nullptr));
+                                          point.x, point.y, point.x, point.y, nullptr));
 }
