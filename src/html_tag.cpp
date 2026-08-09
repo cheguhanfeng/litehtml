@@ -1,5 +1,8 @@
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 
 #include "html.h"
 #include "document.h"
@@ -16,6 +19,22 @@
 
 namespace litehtml
 {
+    namespace
+    {
+        float backdrop_blur_radius(const std::string& filter)
+        {
+            const auto blur = lowcase(filter).find("blur(");
+            if(blur == std::string::npos) return 0;
+            const char* value = filter.c_str() + blur + 5;
+            char* end = nullptr;
+            const float radius = std::strtof(value, &end);
+            if(end == value || !std::isfinite(radius)) return 0;
+            while(*end && std::isspace(static_cast<unsigned char>(*end))) ++end;
+            if(end[0] == 'p' && end[1] == 'x') end += 2;
+            while(*end && std::isspace(static_cast<unsigned char>(*end))) ++end;
+            return *end == ')' ? std::max(0.f, radius) : 0.f;
+        }
+    }
 
     litehtml::html_tag::html_tag(const std::shared_ptr<document>& doc) :
         element(doc)
@@ -92,6 +111,11 @@ namespace litehtml
             std::string name = lowcase(_name);
             // m_attrs has all attribute values, including class and id, in their original case
             // because in attribute selector values are matched case-sensitively even in quirks mode
+            const auto existing = m_attrs.find(name);
+            if(existing != m_attrs.end() && existing->second == _val)
+            {
+                return;
+            }
             m_attrs[name] = _val;
 
             if(name == "class")
@@ -118,7 +142,24 @@ namespace litehtml
                 }
                 m_id = _id(val);
             }
+
+            // Attribute selectors, classes, ids, and inline styles can all
+            // affect computed styles. Coalesce DOM mutations until render().
+            get_document()->invalidate_styles(shared_from_this());
         }
+    }
+
+    bool html_tag::remove_attr(const char* _name)
+    {
+        if(!_name) return false;
+        const std::string name = lowcase(_name);
+        const auto found = m_attrs.find(name);
+        if(found == m_attrs.end()) return false;
+        m_attrs.erase(found);
+        if(name == "class") { m_classes.clear(); m_str_classes.clear(); }
+        else if(name == "id") { m_id = _id(""); }
+        get_document()->invalidate_styles(shared_from_this());
+        return true;
     }
 
     const char* html_tag::get_attr(const char* name, const char* def) const
@@ -922,6 +963,20 @@ namespace litehtml
                     bdr.right = m_css.get_borders().right;
                 }
 
+                const float blur_radius = backdrop_blur_radius(m_css.get_backdrop_filter());
+                if(blur_radius > 0)
+                {
+                    background_layer layer;
+                    layer.border_box = box;
+                    layer.clip_box = box;
+                    layer.origin_box = box;
+                    layer.border_radius = bdr.radius.calc_percents(box.width, box.height);
+                    layer.border_box.round();
+                    layer.clip_box.round();
+                    layer.origin_box.round();
+                    get_document()->container()->draw_backdrop_filter(hdc, layer, blur_radius);
+                }
+
                 if(bg)
                 {
                     int num_layers = bg->get_layers_number();
@@ -969,6 +1024,25 @@ namespace litehtml
                 auto v_offset  = ri->get_draw_vertical_offset();
                 pos.y         += v_offset;
                 pos.height    -= v_offset;
+
+                const float blur_radius = backdrop_blur_radius(m_css.get_backdrop_filter());
+                if(blur_radius > 0)
+                {
+                    background_layer layer;
+                    layer.border_box = border_box;
+                    layer.clip_box = border_box;
+                    layer.origin_box = border_box;
+                    layer.border_radius = m_css.get_borders().radius.calc_percents(border_box.width, border_box.height);
+                    if(is_root() && clip != nullptr)
+                    {
+                        layer.border_box = *clip;
+                        layer.clip_box = *clip;
+                    }
+                    layer.border_box.round();
+                    layer.clip_box.round();
+                    layer.origin_box.round();
+                    get_document()->container()->draw_backdrop_filter(hdc, layer, blur_radius);
+                }
 
                 const background* bg = get_background();
                 if(bg)

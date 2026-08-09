@@ -74,6 +74,7 @@ namespace litehtml
         std::string                             m_text;
         document_mode                           m_mode      = no_quirks_mode;
         bool                                    m_finalized = false;
+        bool                                    m_styles_dirty = false;
 
       public:
         document(document_container* objContainer);
@@ -89,6 +90,10 @@ namespace litehtml
         }
         uint_ptr  get_font(const font_description& descr, font_metrics* fm);
         pixel_t   render(pixel_t max_width, render_type rt = render_all);
+        // Re-render a DOM subtree when its render item is self-contained.  The
+        // method deliberately falls back to a normal render when the mutation
+        // can affect normal-flow siblings or requires a render-tree rebuild.
+        pixel_t   render_dirty(const std::shared_ptr<element>& root, pixel_t max_width, render_type rt = render_all);
         void      draw(uint_ptr hdc, pixel_t x, pixel_t y, const position* clip);
         web_color get_def_color() const
         {
@@ -121,6 +126,11 @@ namespace litehtml
         bool                         lang_changed();
         bool                         match_lang(const std::string& lang);
         void                         add_tabular(const std::shared_ptr<render_item>& el);
+        // Schedules a full style/render-tree refresh before the next render.
+        void                         invalidate_styles();
+        // Attribute mutations identify their origin so render_dirty can limit
+        // selector recomputation to the changed subtree when safe.
+        void                         invalidate_styles(const std::shared_ptr<element>& root);
         std::shared_ptr<const element> get_over_element() const
         {
             return m_over_element;
@@ -153,6 +163,7 @@ namespace litehtml
         void         create_node(void* gnode, elements_list& elements, bool parseTextNode, bool process_root);
         bool         update_media_lists(const media_features& features);
         void         fix_tables_layout();
+        void         rebuild_render_tree();
         void fix_table_children(const std::shared_ptr<render_item>& el_ptr, style_display disp, const char* disp_str);
         void fix_table_parent(const std::shared_ptr<render_item>& el_ptr, style_display disp, const char* disp_str);
     };

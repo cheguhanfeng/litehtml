@@ -54,6 +54,10 @@ namespace litehtml
                                           const background_layer::radial_gradient& gradient)                        = 0;
         virtual void draw_conic_gradient(litehtml::uint_ptr hdc, const background_layer& layer,
                                          const background_layer::conic_gradient& gradient)                          = 0;
+        // Applies a backdrop blur to content already painted behind layer. Hosts
+        // that do not support backbuffer sampling may keep the default no-op.
+        virtual void draw_backdrop_filter(litehtml::uint_ptr /*hdc*/, const background_layer& /*layer*/,
+                                          float /*blur_radius*/) {}
         virtual void draw_borders(litehtml::uint_ptr hdc, const litehtml::borders& borders,
                                   const litehtml::position& draw_pos, bool root)                                    = 0;
 

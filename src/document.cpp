@@ -533,6 +533,10 @@ namespace litehtml
     pixel_t document::render(pixel_t max_width, render_type rt)
     {
         pixel_t ret = 0_px;
+        if(m_styles_dirty)
+        {
+            rebuild_render_tree();
+        }
         if(m_root && m_root_render)
         {
             position viewport;
@@ -561,6 +565,83 @@ namespace litehtml
             }
         }
         return ret;
+    }
+
+    pixel_t document::render_dirty(const std::shared_ptr<element>& root, pixel_t max_width, render_type rt)
+    {
+        if(!root || root == m_root || m_styles_dirty)
+        {
+            return render(max_width, rt);
+        }
+
+        // A positioned subtree is independent of normal-flow sibling placement.
+        // Recompute only its selector results and rerender its existing render
+        // item in place. Structural edits and normal-flow geometry retain the
+        // full-render fallback below, which is required for CSS correctness.
+        root->refresh_styles();
+        root->compute_styles();
+        auto item = root->get_render_item();
+        if(!item || !root->is_positioned())
+        {
+            return render(max_width, rt);
+        }
+
+        position viewport;
+        m_container->get_viewport(viewport);
+        containing_block_context cb_context;
+        cb_context.width = max_width;
+        cb_context.width.type = containing_block_context::cbc_value_type_absolute;
+        cb_context.height = viewport.height;
+        cb_context.height.type = containing_block_context::cbc_value_type_absolute;
+        const auto placement = item->pos();
+        const auto result = item->render(placement.x, placement.y, cb_context, nullptr);
+        if(m_root_render->fetch_positioned())
+        {
+            m_fixed_boxes.clear();
+            m_root_render->render_positioned(rt);
+        }
+        m_size.width = 0;
+        m_size.height = 0;
+        m_root_render->calc_document_size(m_size);
+        return result.natural_width;
+    }
+
+    void document::invalidate_styles()
+    {
+        // Attributes are also populated while parsing. Initial finalization
+        // already computes those styles, so defer only later DOM mutations.
+        if(m_finalized)
+        {
+            m_styles_dirty = true;
+        }
+    }
+
+    void document::invalidate_styles(const std::shared_ptr<element>& root)
+    {
+        // A selector can depend on an ancestor, sibling, or descendant (for
+        // example `.selected + li` and `:has()`).  Rebuilding the tree is the
+        // only generally correct response to an attribute change, and also
+        // keeps callers of the ordinary render() API correct.
+        (void)root;
+        invalidate_styles();
+    }
+
+    void document::rebuild_render_tree()
+    {
+        m_styles_dirty = false;
+        if(!m_root) return;
+
+        m_root->refresh_styles();
+        m_root->compute_styles();
+
+        // display can change, so the old tree may lack newly visible items.
+        m_tabular_elements.clear();
+        m_root_render = m_root->create_render_item(nullptr);
+        fix_tables_layout();
+        if(m_root_render)
+        {
+            m_root_render = m_root_render->init();
+        }
     }
 
     void document::draw(uint_ptr hdc, pixel_t x, pixel_t y, const position* clip)
@@ -1164,7 +1245,10 @@ namespace litehtml
         if(replace_existing)
         {
             parent.clearRecursive();
-            parent_render->children().clear();
+            if(parent_render)
+            {
+                parent_render->children().clear();
+            }
         }
 
         // Let's process created elements tree
@@ -1199,10 +1283,13 @@ namespace litehtml
                 }
             }
         }
-        // Now the m_tabular_elements is filled with tabular elements.
-        // We have to check the tabular elements for missing table elements
-        // and create the anonymous boxes in visual table layout
-        fix_tables_layout();
+        // The caller may rebuild the render tree after a structural mutation.
+        // Do not attempt table repair when this parent has no render item (for
+        // example, while it is display:none).
+        if(parent_render)
+        {
+            fix_tables_layout();
+        }
     }
 
     bool document::append_child(const element::ptr& parent, const element::ptr& child)

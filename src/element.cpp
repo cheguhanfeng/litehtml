@@ -145,7 +145,8 @@ namespace litehtml
         } else if(css().get_display() == display_inline_text)
         {
             ret = std::make_shared<render_text>(shared_from_this());
-        } else if(css().get_display() == display_flex || css().get_display() == display_inline_flex)
+        } else if(css().get_display() == display_flex || css().get_display() == display_inline_flex ||
+                  css().get_display() == display_grid || css().get_display() == display_inline_grid)
         {
             ret = std::make_shared<render_item_flex>(shared_from_this());
         }
@@ -263,6 +264,7 @@ namespace litehtml
         }
         if(m_css.get_display() == display_inline_block || m_css.get_display() == display_table_cell ||
            m_css.get_display() == display_inline_flex || m_css.get_display() == display_flex ||
+           m_css.get_display() == display_inline_grid || m_css.get_display() == display_grid ||
            m_css.get_display() == display_table_caption || is_root() || m_css.get_float() != float_none ||
            m_css.get_position() == element_position_absolute || m_css.get_position() == element_position_fixed ||
            m_css.get_overflow() > overflow_visible)
