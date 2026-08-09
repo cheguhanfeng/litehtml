@@ -282,6 +282,13 @@ void litehtml::css_properties::compute(const html_tag* el, const document::ptr& 
     }
 
     m_order = el->get_property<int>(_order_, false, 0, offset(m_order));
+    m_grid_template_columns = el->get_property<std::string>(_grid_template_columns_, false, "", offset(m_grid_template_columns));
+    m_grid_template_rows = el->get_property<std::string>(_grid_template_rows_, false, "", offset(m_grid_template_rows));
+    m_backdrop_filter = el->get_property<std::string>(_backdrop_filter_, false, "", offset(m_backdrop_filter));
+    if(m_backdrop_filter.empty())
+    {
+        m_backdrop_filter = el->get_property<std::string>(__webkit_backdrop_filter_, false, "", offset(m_backdrop_filter));
+    }
 
     compute_background(el, doc);
     compute_flex(el, doc);
@@ -579,7 +586,8 @@ void litehtml::css_properties::compute_background(const html_tag* el, const docu
 
 void litehtml::css_properties::compute_flex(const html_tag* el, const document::ptr& doc)
 {
-    if(m_display == display_flex || m_display == display_inline_flex)
+    if(m_display == display_flex || m_display == display_inline_flex || m_display == display_grid ||
+       m_display == display_inline_grid)
     {
         m_flex_direction = static_cast<flex_direction>(
             el->get_property<int>(_flex_direction_, false, flex_direction_row, offset(m_flex_direction)));

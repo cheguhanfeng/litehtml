@@ -94,6 +94,9 @@ namespace litehtml
         flex_align_content   m_flex_align_content   = flex_align_content_stretch;
         css_length           m_row_gap;
         css_length           m_column_gap;
+        std::string          m_grid_template_columns;
+        std::string          m_grid_template_rows;
+        std::string          m_backdrop_filter;
 
         caption_side m_caption_side = caption_side_top;
 
@@ -242,6 +245,9 @@ namespace litehtml
         flex_align_content   get_flex_align_content() const;
         const css_length&    get_row_gap() const;
         const css_length&    get_column_gap() const;
+        const std::string&   get_grid_template_columns() const;
+        const std::string&   get_grid_template_rows() const;
+        const std::string&   get_backdrop_filter() const;
 
         int  get_order() const;
         void set_order(int order);
@@ -695,6 +701,10 @@ namespace litehtml
     {
         return m_column_gap;
     }
+
+    inline const std::string& css_properties::get_grid_template_columns() const { return m_grid_template_columns; }
+    inline const std::string& css_properties::get_grid_template_rows() const { return m_grid_template_rows; }
+    inline const std::string& css_properties::get_backdrop_filter() const { return m_backdrop_filter; }
 
     inline caption_side css_properties::get_caption_side() const
     {

@@ -6,6 +6,149 @@ litehtml::rendered_width litehtml::render_item_flex::_render_content(pixel_t x, 
                                                                      const containing_block_context& self_size,
                                                                      formatting_context*             fmt_ctx)
 {
+	if(css().get_display() == display_grid || css().get_display() == display_inline_grid)
+	{
+		const auto resolve_gap = [&](const css_length& gap) {
+			return gap.units() == css_units_percentage ? gap.calc_percent(self_size.render_width) : pixel_t(gap.val());
+		};
+		const pixel_t column_gap = resolve_gap(css().get_column_gap());
+		const pixel_t row_gap = resolve_gap(css().get_row_gap());
+
+		// Keep this intentionally small grid implementation focused on the subset
+		// used by embedded pages: fixed tracks, fractional tracks, repeat(), and
+		// auto-fill(minmax()).  Splitting outside parentheses is important: a
+		// minmax() expression is one track, not two whitespace-separated tokens.
+		auto split_tracks = [](const std::string& value) {
+			std::vector<std::string> result;
+			int depth = 0;
+			size_t start = std::string::npos;
+			for(size_t i = 0; i <= value.size(); ++i)
+			{
+				const char ch = i == value.size() ? ' ' : value[i];
+				if(ch == '(') ++depth;
+				else if(ch == ')' && depth > 0) --depth;
+				if(std::isspace(static_cast<unsigned char>(ch)) && depth == 0)
+				{
+					if(start != std::string::npos) { result.push_back(value.substr(start, i - start)); start = std::string::npos; }
+				}
+				else if(start == std::string::npos) start = i;
+			}
+			return result;
+		};
+		auto parse_number = [](const std::string& value) { return std::strtof(value.c_str(), nullptr); };
+		auto expand_tracks = [&](const std::string& definition, pixel_t available, pixel_t gap) {
+			std::vector<std::string> tracks;
+			for(const auto& token : split_tracks(definition))
+			{
+				if(token.rfind("repeat(", 0) != 0 || token.back() != ')') { tracks.push_back(token); continue; }
+				const auto comma = token.find(',');
+				if(comma == std::string::npos) { tracks.push_back(token); continue; }
+				std::string count = token.substr(7, comma - 7);
+				count.erase(std::remove_if(count.begin(), count.end(), [](unsigned char c) { return std::isspace(c); }), count.end());
+				const std::string repeated = token.substr(comma + 1, token.size() - comma - 2);
+				int repetitions = std::max(1, std::atoi(count.c_str()));
+				if(count == "auto-fill" || count == "auto-fit")
+				{
+					pixel_t minimum = 1_px;
+					const auto minmax = repeated.find("minmax(");
+					const auto comma_in_minmax = repeated.find(',', minmax);
+					if(minmax != std::string::npos && comma_in_minmax != std::string::npos)
+					{
+						const std::string minimum_text = repeated.substr(minmax + 7, comma_in_minmax - minmax - 7);
+						minimum = pixel_t(std::max(1.f, parse_number(minimum_text)));
+					}
+					repetitions = std::max(1, static_cast<int>((available.value() + gap.value()) / (minimum.value() + gap.value())));
+				}
+				const auto nested = split_tracks(repeated);
+				for(int n = 0; n < repetitions; ++n) tracks.insert(tracks.end(), nested.begin(), nested.end());
+			}
+			if(tracks.empty()) tracks.push_back("1fr");
+			return tracks;
+		};
+		auto resolve_tracks = [&](const std::vector<std::string>& tracks, pixel_t available, pixel_t gap) {
+			std::vector<pixel_t> sizes(tracks.size(), 0_px);
+			float fraction_total = 0.f;
+			pixel_t fixed = gap * static_cast<int>(tracks.size() - 1);
+			for(size_t i = 0; i < tracks.size(); ++i)
+			{
+				const auto& track = tracks[i];
+				if(track.size() > 2 && track.compare(track.size() - 2, 2, "fr") == 0) fraction_total += std::max(0.f, parse_number(track));
+				else if(track.rfind("minmax(", 0) == 0) fraction_total += 1.f;
+				else if(track.size() > 1 && track.back() == '%') { sizes[i] = pixel_t(available.value() * parse_number(track) / 100.f); fixed += sizes[i]; }
+				else { sizes[i] = pixel_t(std::max(0.f, parse_number(track))); fixed += sizes[i]; }
+			}
+			const pixel_t unit = fraction_total > 0.f ? std::max(0_px, (available - fixed) / fraction_total) : 0_px;
+			for(size_t i = 0; i < tracks.size(); ++i)
+				if((tracks[i].size() > 2 && tracks[i].compare(tracks[i].size() - 2, 2, "fr") == 0) || tracks[i].rfind("minmax(", 0) == 0)
+					sizes[i] = unit * (tracks[i].rfind("minmax(", 0) == 0 ? 1.f : std::max(0.f, parse_number(tracks[i])));
+			return sizes;
+		};
+
+		const pixel_t container_width = self_size.render_width.value;
+		const auto column_tracks = expand_tracks(css().get_grid_template_columns(), container_width, column_gap);
+		const auto column_sizes = resolve_tracks(column_tracks, container_width, column_gap);
+		const int columns = static_cast<int>(column_sizes.size());
+		// Omitted grid-template-rows creates implicit auto rows.  It must not
+		// inherit the column fallback of 1fr, otherwise every ordinary one-row
+		// grid (such as a table row) expands to the viewport height.
+		const auto row_tracks = css().get_grid_template_rows().empty()
+			? std::vector<std::string>{} : expand_tracks(css().get_grid_template_rows(), self_size.height.value, row_gap);
+		const auto row_sizes = row_tracks.empty()
+			? std::vector<pixel_t>{} : resolve_tracks(row_tracks, self_size.height.value, row_gap);
+
+		// Grid item coordinates are local to this formatting context. Passing the
+		// grid's own x/y here applies its document offset a second time when paint
+		// placement walks the ancestor chain (the dashboard's first row was shifted
+		// down by exactly this duplicated offset).
+		pixel_t grid_y = 0_px;
+		pixel_t natural_width = 0_px;
+		std::vector<std::shared_ptr<render_item>> grid_children(m_children.begin(), m_children.end());
+		std::stable_sort(grid_children.begin(), grid_children.end(), [](const auto& left, const auto& right) {
+			return left->css().get_order() < right->css().get_order();
+		});
+		auto child_it = grid_children.begin();
+		int row = 0;
+		while(child_it != grid_children.end())
+		{
+			pixel_t row_height = row < static_cast<int>(row_sizes.size()) ? row_sizes[row] : 0_px;
+			pixel_t grid_x = 0_px;
+			struct row_item { std::shared_ptr<render_item> child; pixel_t x; pixel_t width; };
+			std::vector<row_item> current_row;
+			for(int column = 0; column < columns && child_it != grid_children.end(); ++column, ++child_it)
+			{
+				auto& child = *child_it;
+				const auto rendered = child->render(grid_x, grid_y, self_size.new_width(column_sizes[column]), fmt_ctx);
+				row_height = std::max(row_height, child->height());
+				natural_width = std::max(natural_width, rendered.natural_width);
+				current_row.push_back({child, grid_x, column_sizes[column]});
+				grid_x += column_sizes[column] + column_gap;
+			}
+
+			// CSS Grid's normal align-items value stretches auto-height items to the
+			// row's cross size. Re-rendering with an exact height also lets percentage
+			// descendants (such as the dashboard bar fills) resolve against that size.
+			for(const auto& item : current_row)
+			{
+				auto align = item.child->css().get_flex_align_self();
+				if(align == flex_align_items_auto) align = css().get_flex_align_items();
+				if((align == flex_align_items_normal || align == flex_align_items_stretch) &&
+				   item.child->css().get_height().is_predefined() && item.child->height() < row_height)
+				{
+					item.child->render(item.x, grid_y,
+						self_size.new_width_height(item.width, row_height,
+							containing_block_context::size_mode_exact_height), fmt_ctx);
+				}
+			}
+			grid_y += row_height + row_gap;
+			++row;
+		}
+		m_pos.height = std::max(0_px, grid_y - (grid_children.empty() ? 0_px : row_gap));
+		m_pos.move_to(x, y);
+		m_pos.x += content_offset_left();
+		m_pos.y += content_offset_top();
+		return {std::max(natural_width, container_width), container_width};
+	}
+
     bool    is_row_direction    = true;
     bool    reverse             = false;
     pixel_t container_main_size = self_size.render_width;
