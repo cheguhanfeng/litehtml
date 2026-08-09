@@ -81,49 +81,51 @@ void litehtml::el_before_after_base::add_style(const style& style)
 
 void litehtml::el_before_after_base::add_text(const std::string& txt)
 {
-    std::string word;
-    std::string esc;
-
-    for(auto chr : txt)
+    // CSS escapes use one to six hexadecimal digits. Some embedded pages also
+    // use JavaScript-style \uXXXX escapes in CSS strings, so accept that common
+    // form as a compatibility extension.
+    std::string decoded;
+    for(size_t i = 0; i < txt.size();)
     {
-        if(chr == '\\' || (!esc.empty() && esc.length() < 5 &&
-                           ((chr >= '0' && chr <= '9') || (chr >= 'A' && chr <= 'Z') || (chr >= 'a' && chr <= 'z'))))
+        if(txt[i] != '\\')
         {
-            if(!esc.empty() && chr == '\\')
-            {
-                word += convert_escape(esc.c_str() + 1);
-                esc.clear();
-            }
-            esc += chr;
-        } else
-        {
-            if(!esc.empty())
-            {
-                word += convert_escape(esc.c_str() + 1);
-                esc.clear();
-            }
-            if(isspace(static_cast<unsigned char>(chr)))
-            {
-                if(!word.empty())
-                {
-                    element::ptr el = std::make_shared<el_text>(word.c_str(), get_document());
-                    appendChild(el);
-                    word.clear();
-                }
-                word            += chr;
-                element::ptr el  = std::make_shared<el_space>(word.c_str(), get_document());
-                appendChild(el);
-                word.clear();
-            } else
-            {
-                word += chr;
-            }
+            decoded += txt[i++];
+            continue;
         }
+        ++i;
+        bool javascript_escape = i < txt.size() && (txt[i] == 'u' || txt[i] == 'U');
+        if(javascript_escape) ++i;
+        const size_t begin = i;
+        const size_t max_digits = javascript_escape ? 4 : 6;
+        while(i < txt.size() && i - begin < max_digits && std::isxdigit(static_cast<unsigned char>(txt[i]))) ++i;
+        if(i == begin)
+        {
+            if(i < txt.size()) decoded += txt[i++];
+            continue;
+        }
+        decoded += convert_escape(txt.substr(begin, i - begin).c_str());
+        if(!javascript_escape && i < txt.size() && std::isspace(static_cast<unsigned char>(txt[i]))) ++i;
     }
 
-    if(!esc.empty())
+    std::string word;
+    for(auto chr : decoded)
     {
-        word += convert_escape(esc.c_str() + 1);
+        if(isspace(static_cast<unsigned char>(chr)))
+        {
+            if(!word.empty())
+            {
+                element::ptr el = std::make_shared<el_text>(word.c_str(), get_document());
+                appendChild(el);
+                word.clear();
+            }
+            word = chr;
+            element::ptr el = std::make_shared<el_space>(word.c_str(), get_document());
+            appendChild(el);
+            word.clear();
+        } else
+        {
+            word += chr;
+        }
     }
     if(!word.empty())
     {
