@@ -463,6 +463,10 @@ std::list<litehtml::flex_line> litehtml::render_item_flex::get_lines(
             line = flex_line(reverse_main, reverse_cross);
             line.gap_size = main_gap;
         }
+        if(!line.items.empty())
+        {
+            line.base_size += main_gap;
+        }
         line.base_size += item->base_size;
         line.main_size += item->main_size;
         if(line.items.size() > 1)
