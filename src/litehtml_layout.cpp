@@ -521,8 +521,11 @@ namespace litehtml
         {
             if(m_cb && m_cb->import_css)
             {
-                // 分配可增长缓冲区，避免回调写入越界
-                std::string tbuf(text.size() * 2 + 16, '\0');
+                // External stylesheets are commonly much larger than the empty
+                // placeholder passed by the parser. Give the host a documented
+                // bounded response buffer instead of the previous 16-byte slot.
+                constexpr size_t import_css_capacity = 1024 * 1024;
+                std::string tbuf(import_css_capacity, '\0');
                 std::memcpy(tbuf.data(), text.data(), text.size());
                 std::string bbuf(baseurl.size() * 2 + 16, '\0');
                 std::memcpy(bbuf.data(), baseurl.data(), baseurl.size());
@@ -594,6 +597,12 @@ namespace
         return handle;
     }
 
+    bool IsCurrentElement(const litehtml_layout_element* handle)
+    {
+        return handle && handle->service && handle->service->doc && handle->element &&
+               handle->element->get_document() == handle->service->doc;
+    }
+
     uint64_t GetNodeId(litehtml_layout_service* service, const litehtml::element::ptr& element)
     {
         if(!service || !element) return 0;
@@ -623,6 +632,32 @@ LITEHTML_API void litehtml_layout_destroy(litehtml_layout_service* service)
 {
     delete service;
 }
+
+#if defined(LITEHTML_ENABLE_STYLE_DIAGNOSTICS)
+LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
+    const litehtml_layout_service* service, litehtml_style_invalidation_stats* out_stats)
+{
+    if(!out_stats) return;
+    *out_stats = {};
+    if(!service || !service->doc) return;
+    const auto& stats = service->doc->style_stats();
+    out_stats->computed_refresh_count = stats.computed_refresh_count;
+    out_stats->subtree_match_count = stats.subtree_match_count;
+    out_stats->full_match_count = stats.full_match_count;
+    out_stats->computed_refresh_elements = stats.computed_refresh_elements;
+    out_stats->subtree_match_elements = stats.subtree_match_elements;
+    out_stats->full_match_elements = stats.full_match_elements;
+    out_stats->computed_refresh_ns = stats.computed_refresh_ns;
+    out_stats->subtree_match_ns = stats.subtree_match_ns;
+    out_stats->full_match_ns = stats.full_match_ns;
+    out_stats->render_tree_fallback_count = stats.render_tree_fallback_count;
+}
+
+LITEHTML_API void litehtml_layout_reset_style_invalidation_stats(litehtml_layout_service* service)
+{
+    if(service && service->doc) service->doc->reset_style_stats();
+}
+#endif
 
 LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
                                            const char* html,
@@ -674,7 +709,7 @@ LITEHTML_API int litehtml_layout_render_dirty(litehtml_layout_service* service,
                                               float max_width,
                                               int render_type)
 {
-    if(!service || !service->doc || !changed_root || changed_root->service != service || !changed_root->element)
+    if(!service || !service->doc || !IsCurrentElement(changed_root) || changed_root->service != service)
     {
         return 0;
     }
@@ -727,7 +762,7 @@ LITEHTML_API void litehtml_layout_scroll_by(litehtml_layout_service* service, fl
 
 LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, litehtml_layout_element* element)
 {
-    if(!service || !element || !element->element) return;
+    if(!service || !IsCurrentElement(element) || element->service != service) return;
     const auto placement = element->element->get_placement();
     // 目标元素顶部对齐视口顶部（保留少量边距）。
     service->scroll_y = static_cast<float>(placement.y) - 8.f;
@@ -806,14 +841,14 @@ LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_la
 
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value)
 {
-    if(!element || !element->element || !name || !value) return 0;
+    if(!IsCurrentElement(element) || !name || !value) return 0;
     element->element->set_attr(name, value);
     return 1;
 }
 
 LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_element* element, const char* name)
 {
-    if(!element || !element->element || !name) return 0;
+    if(!IsCurrentElement(element) || !name) return 0;
     // litehtml models attributes as strings.  Erasing the source attribute is
     // important for HTML boolean attributes: checked="false" is still checked.
     auto tag = std::dynamic_pointer_cast<litehtml::html_tag>(element->element);
@@ -859,19 +894,46 @@ LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_ele
 
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html)
 {
-    if(!element || !element->service || !element->service->doc || !element->element || !html) return 0;
-    element->service->doc->append_children_from_string(*element->element, html, true);
-    // Child nodes and display:none transitions can change the render-tree shape.
-    element->service->doc->invalidate_styles();
-    return 1;
+    if(!IsCurrentElement(element) || !html) return 0;
+    return element->service->doc->set_inner_html(element->element, html) ? 1 : 0;
 }
 
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child)
 {
-    if(!parent || !child || parent->service != child->service || !parent->service || !parent->service->doc) return 0;
-    const bool appended = parent->service->doc->append_child(parent->element, child->element);
-    if(appended) parent->service->doc->invalidate_styles();
-    return appended ? 1 : 0;
+    if(!IsCurrentElement(parent) || !IsCurrentElement(child) || parent->service != child->service) return 0;
+    return parent->service->doc->append_child(parent->element, child->element) ? 1 : 0;
+}
+
+LITEHTML_API int litehtml_layout_element_get_child_count(const litehtml_layout_element* parent)
+{
+    if(!parent || !parent->element) return 0;
+    int count = 0;
+    for(const auto& child : parent->element->children()) if(child && child->get_tagName()) ++count;
+    return count;
+}
+
+LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_child(const litehtml_layout_element* parent, int index)
+{
+    if(!parent || !parent->service || !parent->element || index < 0) return nullptr;
+    for(const auto& child : parent->element->children())
+    {
+        if(!child || !child->get_tagName()) continue;
+        if(index-- == 0) return MakeElementHandle(parent->service, child);
+    }
+    return nullptr;
+}
+
+LITEHTML_API int litehtml_layout_element_remove_child(litehtml_layout_element* parent, litehtml_layout_element* child)
+{
+    if(!IsCurrentElement(parent) || !IsCurrentElement(child) || parent->service != child->service) return 0;
+    return parent->service->doc->remove_child(parent->element, child->element) ? 1 : 0;
+}
+
+LITEHTML_API int litehtml_layout_element_replace_child(litehtml_layout_element* parent, litehtml_layout_element* replacement, litehtml_layout_element* child)
+{
+    if(!IsCurrentElement(parent) || !IsCurrentElement(replacement) || !IsCurrentElement(child) ||
+       parent->service != replacement->service || parent->service != child->service) return 0;
+    return parent->service->doc->replace_child(parent->element, replacement->element, child->element) ? 1 : 0;
 }
 
 namespace

@@ -67,7 +67,7 @@ namespace litehtml
         if(el && el->parent() == shared_from_this())
         {
             el->parent(nullptr);
-            m_children.erase(std::remove(m_children.begin(), m_children.end(), el), m_children.end());
+            m_children.remove(el);
             return true;
         }
         return false;
@@ -143,9 +143,7 @@ namespace litehtml
                 m_id = _id(val);
             }
 
-            // Attribute selectors, classes, ids, and inline styles can all
-            // affect computed styles. Coalesce DOM mutations until render().
-            get_document()->invalidate_styles(shared_from_this());
+            get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str());
         }
     }
 
@@ -158,7 +156,7 @@ namespace litehtml
         m_attrs.erase(found);
         if(name == "class") { m_classes.clear(); m_str_classes.clear(); }
         else if(name == "id") { m_id = _id(""); }
-        get_document()->invalidate_styles(shared_from_this());
+        get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str());
         return true;
     }
 
@@ -1514,6 +1512,34 @@ namespace litehtml
     {
         m_style.combine(style);
         handle_counter_properties();
+    }
+
+    void litehtml::html_tag::reset_styles()
+    {
+        element::reset_styles();
+        for(auto child = m_children.begin(); child != m_children.end();)
+        {
+            if((*child)->tag() == __tag_before_ || (*child)->tag() == __tag_after_)
+            {
+                (*child)->parent(nullptr);
+                child = m_children.erase(child);
+            } else
+            {
+                (*child)->reset_styles();
+                ++child;
+            }
+        }
+        m_style.clear();
+    }
+
+    void litehtml::html_tag::reset_matched_styles()
+    {
+        element::reset_matched_styles();
+        for(auto& child : m_children)
+        {
+            child->reset_matched_styles();
+        }
+        m_style.clear();
     }
 
     void litehtml::html_tag::refresh_styles()

@@ -90,6 +90,11 @@ namespace litehtml
         virtual void        set_attr(const char* name, const char* val);
         virtual const char* get_attr(const char* name, const char* def = nullptr) const;
         virtual void        apply_stylesheet(const litehtml::css& stylesheet);
+        virtual void        reset_styles();
+        // Clear selector/declaration state without dropping the existing render
+        // items. Used by scoped style invalidation when render-tree topology is
+        // still expected to be reusable.
+        virtual void        reset_matched_styles();
         virtual void        refresh_styles();
         virtual bool        is_white_space() const;
         virtual bool        is_space() const;

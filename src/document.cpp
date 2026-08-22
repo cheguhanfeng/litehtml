@@ -28,8 +28,77 @@
 #include "stylesheet.h"
 #include "types.h"
 
+#include <chrono>
+
 namespace litehtml
 {
+    namespace
+    {
+        bool selector_has_pseudo_element(const css_selector& selector)
+        {
+            for(const auto& part : selector.m_right.m_attrs)
+            {
+                if(part.type == select_pseudo_element)
+                {
+                    return true;
+                }
+                for(const auto& nested : part.selector_list)
+                {
+                    if(nested && selector_has_pseudo_element(*nested))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return selector.m_left && selector_has_pseudo_element(*selector.m_left);
+        }
+
+        bool selector_has_structural_pseudo(const css_selector& selector)
+        {
+            for(const auto& part : selector.m_right.m_attrs)
+            {
+                if(part.type == select_pseudo_class &&
+                   (part.name == _only_child_ || part.name == _only_of_type_ || part.name == _first_child_ ||
+                    part.name == _first_of_type_ || part.name == _last_child_ || part.name == _last_of_type_ ||
+                    part.name == _nth_child_ || part.name == _nth_of_type_ || part.name == _nth_last_child_ ||
+                    part.name == _nth_last_of_type_))
+                {
+                    return true;
+                }
+                for(const auto& nested : part.selector_list)
+                {
+                    if(nested && selector_has_structural_pseudo(*nested)) return true;
+                }
+            }
+            return selector.m_left && selector_has_structural_pseudo(*selector.m_left);
+        }
+
+        struct style_topology_entry
+        {
+            const element* node;
+            style_display  display;
+            element_position position;
+            string_id      tag;
+            size_t         child_count;
+        };
+
+        void collect_style_topology(const element::ptr& root, std::vector<style_topology_entry>& result)
+        {
+            if(!root) return;
+            result.push_back({root.get(), root->css().get_display(), root->css().get_position(), root->tag(),
+                              root->children().size()});
+            for(const auto& child : root->children())
+            {
+                collect_style_topology(child, result);
+            }
+        }
+
+        bool is_out_of_flow_positioned(const element& el)
+        {
+            const auto position = el.css().get_position();
+            return position == element_position_absolute || position == element_position_fixed;
+        }
+    } // namespace
 
     document::document(document_container* container)
     {
@@ -146,6 +215,7 @@ namespace litehtml
             }
             // Sort css selectors using CSS rules.
             m_styles.sort_selectors();
+            rebuild_selector_dependencies();
 
             // Apply media features.
             update_media_lists(m_media);
@@ -533,7 +603,8 @@ namespace litehtml
     pixel_t document::render(pixel_t max_width, render_type rt)
     {
         pixel_t ret = 0_px;
-        if(m_styles_dirty)
+        prepare_scoped_styles();
+        if(m_render_tree_dirty)
         {
             rebuild_render_tree();
         }
@@ -569,20 +640,32 @@ namespace litehtml
 
     pixel_t document::render_dirty(const std::shared_ptr<element>& root, pixel_t max_width, render_type rt)
     {
-        if(!root || root == m_root || m_styles_dirty)
+        const auto pending_root = m_scoped_styles_dirty_root.lock();
+        if(!root || root == m_root || root->get_document().get() != this || m_styles_dirty || m_render_tree_dirty ||
+           !pending_root || pending_root != root)
         {
             return render(max_width, rt);
         }
 
-        // A positioned subtree is independent of normal-flow sibling placement.
-        // Recompute only its selector results and rerender its existing render
-        // item in place. Structural edits and normal-flow geometry retain the
-        // full-render fallback below, which is required for CSS correctness.
-        root->refresh_styles();
-        root->compute_styles();
-        auto item = root->get_render_item();
-        if(!item || !root->is_positioned())
+        // Only absolute/fixed subtrees are independent of normal-flow sibling
+        // placement. Relative positioning still participates in normal flow.
+        const auto old_display  = root->css().get_display();
+        const auto old_position = root->css().get_position();
+        if(!is_out_of_flow_positioned(*root))
         {
+            return render(max_width, rt);
+        }
+
+        const bool topology_changed = rematch_styles(root, m_scoped_selector_match_required);
+        m_scoped_selector_match_required = false;
+        m_scoped_styles_dirty_root.reset();
+        auto item = root->get_render_item();
+        if(topology_changed || !item || !is_out_of_flow_positioned(*root) || root->css().get_display() != old_display ||
+           root->css().get_position() != old_position)
+        {
+            // A changed render-item kind or positioning mode requires rebuilding
+            // the render tree before the normal document render.
+            m_render_tree_dirty = true;
             return render(max_width, rt);
         }
 
@@ -613,26 +696,280 @@ namespace litehtml
         if(m_finalized)
         {
             m_styles_dirty = true;
+            m_render_tree_dirty = true;
+            m_scoped_selector_match_required = false;
+            m_scoped_styles_dirty_root.reset();
         }
     }
 
     void document::invalidate_styles(const std::shared_ptr<element>& root)
     {
-        // A selector can depend on an ancestor, sibling, or descendant (for
-        // example `.selected + li` and `:has()`).  Rebuilding the tree is the
-        // only generally correct response to an attribute change, and also
-        // keeps callers of the ordinary render() API correct.
-        (void)root;
+        invalidate_attribute_styles(root, "style");
+    }
+
+    bool document::is_connected(const std::shared_ptr<element>& root) const
+    {
+        if(!root || root->get_document().get() != this) return false;
+        auto top = root;
+        while(top->parent())
+        {
+            top = top->parent();
+        }
+        return top == m_root;
+    }
+
+    void document::schedule_scoped_style_match(const std::shared_ptr<element>& root, bool match_selectors)
+    {
+        if(m_styles_dirty || !is_connected(root)) return;
+        m_scoped_selector_match_required = m_scoped_selector_match_required || match_selectors;
+        const auto pending = m_scoped_styles_dirty_root.lock();
+        if(!pending)
+        {
+            m_scoped_styles_dirty_root = root;
+            return;
+        }
+        if(pending == root) return;
+
+        std::vector<element::ptr> pending_ancestors;
+        for(auto node = pending; node; node = node->parent())
+        {
+            pending_ancestors.push_back(node);
+        }
+        for(auto node = root; node; node = node->parent())
+        {
+            if(std::find(pending_ancestors.begin(), pending_ancestors.end(), node) != pending_ancestors.end())
+            {
+                m_scoped_styles_dirty_root = node;
+                return;
+            }
+        }
         invalidate_styles();
+    }
+
+    void document::invalidate_attribute_styles(const std::shared_ptr<element>& root, const char* attribute)
+    {
+        if(!m_finalized || !attribute || !is_connected(root)) return;
+
+        const auto name = _id(lowcase(attribute));
+        auto scope = style_match_scope::none;
+        if(const auto found = m_attribute_dependencies.find(name); found != m_attribute_dependencies.end())
+        {
+            scope = found->second;
+        }
+        if(name == _id("class") && static_cast<int>(m_class_dependency) > static_cast<int>(scope))
+        {
+            scope = m_class_dependency;
+        }
+        if(name == _id("id") && static_cast<int>(m_id_dependency) > static_cast<int>(scope))
+        {
+            scope = m_id_dependency;
+        }
+        if(scope == style_match_scope::full)
+        {
+            invalidate_styles();
+            return;
+        }
+        // Even when no selector references the attribute, inline and legacy
+        // presentational attributes can alter computed styles on this subtree.
+        const bool simple_computed_style_refresh = scope == style_match_scope::none &&
+                                                   (name == _style_ || name == _id("class") || name == _id("id"));
+        schedule_scoped_style_match(root, !simple_computed_style_refresh);
+    }
+
+    void document::invalidate_structure_styles(const std::shared_ptr<element>& root)
+    {
+        if(!m_finalized || !is_connected(root)) return;
+        m_render_tree_dirty = true;
+        if(m_structure_requires_full_match)
+        {
+            invalidate_styles();
+            return;
+        }
+        schedule_scoped_style_match(root, true);
+    }
+
+    void document::rebuild_selector_dependencies()
+    {
+        m_attribute_dependencies.clear();
+        m_class_dependency = style_match_scope::none;
+        m_id_dependency = style_match_scope::none;
+        m_structure_requires_full_match = false;
+
+        auto merge_scope = [](style_match_scope& current, style_match_scope incoming) {
+            if(static_cast<int>(incoming) > static_cast<int>(current)) current = incoming;
+        };
+        auto record = [&](const css_attribute_selector& attr, style_match_scope scope) {
+            if(attr.type == select_class)
+            {
+                merge_scope(m_class_dependency, scope);
+            } else if(attr.type == select_id)
+            {
+                merge_scope(m_id_dependency, scope);
+            } else if(attr.type == select_attr)
+            {
+                merge_scope(m_attribute_dependencies[attr.name], scope);
+            }
+        };
+
+        std::function<void(const css_selector&, bool, bool)> scan_selector;
+        scan_selector = [&](const css_selector& selector, bool sibling_to_subject, bool forced_full) {
+            const bool selector_creates_content = selector_has_pseudo_element(selector);
+            const auto scope = sibling_to_subject || forced_full || selector_creates_content
+                                   ? style_match_scope::full
+                                   : style_match_scope::subtree;
+            for(const auto& attr : selector.m_right.m_attrs)
+            {
+                record(attr, scope);
+                // Selector lists inside :is/:not/:nth-* can make another node's
+                // match depend on the changed element. Keep this first version
+                // conservative rather than trying to model each pseudo-class.
+                for(const auto& nested : attr.selector_list)
+                {
+                    if(nested) scan_selector(*nested, false, true);
+                }
+            }
+            if(selector.m_left)
+            {
+                const bool sibling = selector.m_combinator == combinator_adjacent_sibling ||
+                                     selector.m_combinator == combinator_general_sibling;
+                scan_selector(*selector.m_left, sibling_to_subject || sibling, forced_full || selector_creates_content);
+            }
+        };
+        auto scan_stylesheet = [&](const css& stylesheet) {
+            for(const auto& selector : stylesheet.selectors())
+            {
+                if(selector)
+                {
+                    // Scoped rematching intentionally preserves generated
+                    // pseudo nodes. A structural mutation can make a relational
+                    // or structural pseudo-element rule stop matching, which
+                    // requires the full reset path to remove the old node.
+                    if(selector_has_pseudo_element(*selector) &&
+                       (selector->m_left || selector_has_structural_pseudo(*selector)))
+                    {
+                        m_structure_requires_full_match = true;
+                    }
+                    scan_selector(*selector, false, false);
+                }
+            }
+        };
+        scan_stylesheet(m_master_css);
+        scan_stylesheet(m_styles);
+        scan_stylesheet(m_user_css);
+    }
+
+    bool document::rematch_styles(const std::shared_ptr<element>& root, bool match_selectors)
+    {
+        if(!root) return false;
+        const auto started = std::chrono::steady_clock::now();
+        std::vector<style_topology_entry> before;
+        std::vector<style_topology_entry> after;
+        collect_style_topology(root, before);
+
+        if(match_selectors)
+        {
+            root->reset_matched_styles();
+            root->apply_stylesheet(m_master_css);
+            root->parse_attributes();
+            root->apply_stylesheet(m_styles);
+            root->apply_stylesheet(m_user_css);
+        } else
+        {
+            // style/class/id changes with no selector dependency cannot alter
+            // which rules match. Reuse the element's previously relevant rule
+            // set and only rebuild declarations/computed values.
+            root->refresh_styles();
+        }
+        root->compute_styles();
+
+        collect_style_topology(root, after);
+        bool topology_changed = before.size() != after.size();
+        for(size_t i = 0; !topology_changed && i < before.size(); ++i)
+        {
+            if(before[i].node != after[i].node || before[i].display != after[i].display ||
+               before[i].position != after[i].position || before[i].tag != after[i].tag ||
+               before[i].child_count != after[i].child_count)
+            {
+                topology_changed = true;
+            }
+        }
+        const auto elapsed = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                        std::chrono::steady_clock::now() - started)
+                                                        .count());
+        if(match_selectors)
+        {
+            ++m_style_invalidation_stats.subtree_match_count;
+            m_style_invalidation_stats.subtree_match_elements += before.size();
+            m_style_invalidation_stats.subtree_match_ns += elapsed;
+        } else
+        {
+            ++m_style_invalidation_stats.computed_refresh_count;
+            m_style_invalidation_stats.computed_refresh_elements += before.size();
+            m_style_invalidation_stats.computed_refresh_ns += elapsed;
+        }
+        if(topology_changed) ++m_style_invalidation_stats.render_tree_fallback_count;
+        return topology_changed;
+    }
+
+    void document::rebuild_all_styles()
+    {
+        m_styles_dirty = false;
+        m_scoped_selector_match_required = false;
+        m_scoped_styles_dirty_root.reset();
+        if(!m_root) return;
+        const auto started = std::chrono::steady_clock::now();
+        std::vector<style_topology_entry> elements;
+        collect_style_topology(m_root, elements);
+
+        // Rebuild selector state from the complete stylesheets. refresh_styles()
+        // only revisits selectors that matched at least partially before the
+        // mutation and cannot activate a newly matching sibling/class rule.
+        m_root->reset_styles();
+        m_root->apply_stylesheet(m_master_css);
+        m_root->parse_attributes();
+        m_root->apply_stylesheet(m_styles);
+        m_root->apply_stylesheet(m_user_css);
+        m_root->compute_styles();
+        ++m_style_invalidation_stats.full_match_count;
+        m_style_invalidation_stats.full_match_elements += elements.size();
+        m_style_invalidation_stats.full_match_ns +=
+            static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now() - started)
+                                      .count());
+        m_render_tree_dirty = true;
+    }
+
+    const style_invalidation_stats& document::style_stats() const
+    {
+        return m_style_invalidation_stats;
+    }
+
+    void document::reset_style_stats()
+    {
+        m_style_invalidation_stats = {};
+    }
+
+    void document::prepare_scoped_styles()
+    {
+        if(m_styles_dirty)
+        {
+            rebuild_all_styles();
+            return;
+        }
+        const auto root = m_scoped_styles_dirty_root.lock();
+        const bool match_selectors = m_scoped_selector_match_required;
+        m_scoped_selector_match_required = false;
+        m_scoped_styles_dirty_root.reset();
+        if(root && rematch_styles(root, match_selectors))
+        {
+            m_render_tree_dirty = true;
+        }
     }
 
     void document::rebuild_render_tree()
     {
-        m_styles_dirty = false;
+        m_render_tree_dirty = false;
         if(!m_root) return;
-
-        m_root->refresh_styles();
-        m_root->compute_styles();
 
         // display can change, so the old tree may lack newly visible items.
         m_tabular_elements.clear();
@@ -1240,84 +1577,132 @@ namespace litehtml
         // Destroy GumboOutput
         gumbo_destroy_output(&kGumboDefaultOptions, output);
 
-        auto parent_render = parent.get_render_item();
-
         if(replace_existing)
         {
             parent.clearRecursive();
-            if(parent_render)
-            {
-                parent_render->children().clear();
-            }
         }
 
-        // Let's process created elements tree
+        // Attach the parsed DOM only. The mutation invalidation path below
+        // performs one scoped style match and one render-tree rebuild, avoiding
+        // eager work that would immediately be discarded.
         for(const auto& child : child_elements)
         {
-            // Add the child element to parent
             parent.appendChild(child);
-
-            // apply master CSS
-            child->apply_stylesheet(m_master_css);
-
-            // parse elements attributes
-            child->parse_attributes();
-
-            // Apply parsed styles.
-            child->apply_stylesheet(m_styles);
-
-            // Apply user styles if any
-            child->apply_stylesheet(m_user_css);
-
-            // Initialize m_css
-            child->compute_styles();
-
-            // Finally initialize elements
-            if(parent_render)
-            {
-                auto child_render = child->create_render_item(parent_render);
-                if(child_render)
-                {
-                    child_render = child_render->init();
-                    parent_render->add_child(child_render);
-                }
-            }
         }
-        // The caller may rebuild the render tree after a structural mutation.
-        // Do not attempt table repair when this parent has no render item (for
-        // example, while it is display:none).
-        if(parent_render)
+    }
+
+    bool document::set_inner_html(const element::ptr& parent, const char* str)
+    {
+        if(!parent || !str || parent->get_document().get() != this)
         {
-            fix_tables_layout();
+            return false;
         }
+
+        append_children_from_string(*parent, str, true);
+        invalidate_structure_styles(parent);
+        return true;
     }
 
     bool document::append_child(const element::ptr& parent, const element::ptr& child)
     {
-        if(!parent || !child || parent->get_document().get() != this || child->get_document().get() != this)
+        if(!parent || !child || parent->get_document().get() != this || child->get_document().get() != this ||
+           !std::dynamic_pointer_cast<html_tag>(parent))
         {
             return false;
         }
 
-        if(!parent->appendChild(child))
+        // A node cannot become its own descendant.
+        for(auto ancestor = parent; ancestor; ancestor = ancestor->parent())
         {
-            return false;
-        }
-
-        child->apply_stylesheet(m_master_css);
-        child->parse_attributes();
-        child->apply_stylesheet(m_styles);
-        child->apply_stylesheet(m_user_css);
-        child->compute_styles();
-
-        if(auto parent_render = parent->get_render_item())
-        {
-            if(auto child_render = child->create_render_item(parent_render))
+            if(ancestor == child)
             {
-                parent_render->add_child(child_render->init());
+                return false;
             }
         }
-        fix_tables_layout();
+
+        const auto old_parent = child->parent();
+        if(old_parent && !old_parent->removeChild(child))
+        {
+            return false;
+        }
+        if(!parent->appendChild(child))
+        {
+            if(old_parent)
+            {
+                old_parent->appendChild(child);
+            }
+            return false;
+        }
+
+        if(old_parent && old_parent != parent)
+        {
+            invalidate_structure_styles(old_parent);
+        }
+        invalidate_structure_styles(parent);
+        return true;
+    }
+
+    bool document::remove_child(const element::ptr& parent, const element::ptr& child)
+    {
+        if(!parent || !child || parent->get_document().get() != this || child->get_document().get() != this ||
+           child->parent() != parent || !parent->removeChild(child))
+        {
+            return false;
+        }
+
+        invalidate_structure_styles(parent);
+        return true;
+    }
+
+    bool document::replace_child(const element::ptr& parent, const element::ptr& replacement,
+                                 const element::ptr& child)
+    {
+        if(!parent || !replacement || !child || parent->get_document().get() != this ||
+           replacement->get_document().get() != this || child->get_document().get() != this ||
+           child->parent() != parent)
+        {
+            return false;
+        }
+        if(replacement == child)
+        {
+            return true;
+        }
+
+        // Replacing a child with one of the parent's ancestors would create a
+        // cycle that neither the DOM tree nor render tree can represent.
+        for(auto ancestor = parent; ancestor; ancestor = ancestor->parent())
+        {
+            if(ancestor == replacement)
+            {
+                return false;
+            }
+        }
+
+        auto tag = std::dynamic_pointer_cast<html_tag>(parent);
+        if(!tag)
+        {
+            return false;
+        }
+        const auto old_parent = replacement->parent();
+        if(old_parent && !old_parent->removeChild(replacement))
+        {
+            return false;
+        }
+        auto& children = tag->children();
+        const auto found = std::find(children.begin(), children.end(), child);
+        if(found == children.end())
+        {
+            return false;
+        }
+        child->parent(nullptr);
+        replacement->parent(parent);
+        *found = replacement;
+
+        if(old_parent && old_parent != parent)
+        {
+            invalidate_structure_styles(old_parent);
+        }
+        invalidate_structure_styles(parent);
         return true;
     }
 

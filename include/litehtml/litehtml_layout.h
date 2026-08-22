@@ -238,6 +238,28 @@ typedef struct litehtml_layout_callbacks
 typedef struct litehtml_layout_service litehtml_layout_service;
 typedef struct litehtml_layout_element litehtml_layout_element;
 
+#if defined(LITEHTML_ENABLE_STYLE_DIAGNOSTICS)
+/* Test/benchmark-only telemetry. Release plugin builds intentionally omit
+   these exports so the production C ABI remains unchanged. */
+typedef struct litehtml_style_invalidation_stats
+{
+    uint64_t computed_refresh_count;
+    uint64_t subtree_match_count;
+    uint64_t full_match_count;
+    uint64_t computed_refresh_elements;
+    uint64_t subtree_match_elements;
+    uint64_t full_match_elements;
+    uint64_t computed_refresh_ns;
+    uint64_t subtree_match_ns;
+    uint64_t full_match_ns;
+    uint64_t render_tree_fallback_count;
+} litehtml_style_invalidation_stats;
+
+LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
+    const litehtml_layout_service* service, litehtml_style_invalidation_stats* out_stats);
+LITEHTML_API void litehtml_layout_reset_style_invalidation_stats(litehtml_layout_service* service);
+#endif
+
 /* 布局模式（对应 litehtml render_type，顺序必须与 litehtml 一致） */
 enum litehtml_render_type
 {
@@ -321,6 +343,11 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const l
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect);
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html);
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child);
+/* Element-child collection helpers. Returned handles are caller-owned. */
+LITEHTML_API int litehtml_layout_element_get_child_count(const litehtml_layout_element* parent);
+LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_child(const litehtml_layout_element* parent, int index);
+LITEHTML_API int litehtml_layout_element_remove_child(litehtml_layout_element* parent, litehtml_layout_element* child);
+LITEHTML_API int litehtml_layout_element_replace_child(litehtml_layout_element* parent, litehtml_layout_element* replacement, litehtml_layout_element* child);
 /* Returns caller-owned handles for elements whose tag name matches tag (ASCII case-insensitive).
    The count is stable for the current document generation only. */
 LITEHTML_API int litehtml_layout_get_elements_by_tag_count(litehtml_layout_service* service, const char* tag);

@@ -4,6 +4,7 @@ project(litehtml LANGUAGES C CXX)
 
 option(LITEHTML_BUILD_TESTING "enable testing for litehtml" OFF)
 option(LITEHTML_ENABLE_LINT "enable linting for litehtml" ON)
+option(LITEHTML_ENABLE_STYLE_DIAGNOSTICS "export style invalidation benchmark telemetry" OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -203,6 +204,10 @@ if(LITEHTML_BUILD_SHARED)
 		)
 else()
 	add_library(${PROJECT_NAME} ${HEADER_LITEHTML} ${SOURCE_LITEHTML})
+endif()
+
+if(LITEHTML_ENABLE_STYLE_DIAGNOSTICS)
+	target_compile_definitions(${PROJECT_NAME} PUBLIC LITEHTML_ENABLE_STYLE_DIAGNOSTICS)
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

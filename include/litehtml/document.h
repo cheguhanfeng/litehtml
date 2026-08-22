@@ -8,12 +8,28 @@
 #include "types.h"
 
 #include <functional>
+#include <cstdint>
+#include <map>
 #include <vector>
 
 using GumboOutput = struct GumboInternalOutput;
 
 namespace litehtml
 {
+    struct style_invalidation_stats
+    {
+        uint64_t computed_refresh_count    = 0;
+        uint64_t subtree_match_count       = 0;
+        uint64_t full_match_count          = 0;
+        uint64_t computed_refresh_elements = 0;
+        uint64_t subtree_match_elements    = 0;
+        uint64_t full_match_elements       = 0;
+        uint64_t computed_refresh_ns       = 0;
+        uint64_t subtree_match_ns          = 0;
+        uint64_t full_match_ns             = 0;
+        uint64_t render_tree_fallback_count = 0;
+    };
+
     struct css_text
     {
         using vector = std::vector<css_text>;
@@ -74,7 +90,26 @@ namespace litehtml
         std::string                             m_text;
         document_mode                           m_mode      = no_quirks_mode;
         bool                                    m_finalized = false;
-        bool                                    m_styles_dirty = false;
+        bool                                    m_styles_dirty      = false;
+        bool                                    m_render_tree_dirty = false;
+
+        enum class style_match_scope : uint8_t
+        {
+            none,
+            subtree,
+            full
+        };
+
+        // Selector dependencies are summarized once after CSS parsing. An
+        // attribute mutation can then decide whether matching is confined to
+        // its subtree or must conservatively cover the full document.
+        std::map<string_id, style_match_scope>  m_attribute_dependencies;
+        style_match_scope                       m_class_dependency = style_match_scope::none;
+        style_match_scope                       m_id_dependency    = style_match_scope::none;
+        bool                                    m_structure_requires_full_match = false;
+        bool                                    m_scoped_selector_match_required = false;
+        std::weak_ptr<element>                  m_scoped_styles_dirty_root;
+        style_invalidation_stats                m_style_invalidation_stats;
 
       public:
         document(document_container* objContainer);
@@ -126,19 +161,35 @@ namespace litehtml
         bool                         lang_changed();
         bool                         match_lang(const std::string& lang);
         void                         add_tabular(const std::shared_ptr<render_item>& el);
-        // Schedules a full style/render-tree refresh before the next render.
+        // Schedules a full stylesheet match and render-tree refresh.
         void                         invalidate_styles();
-        // Attribute mutations identify their origin so render_dirty can limit
-        // selector recomputation to the changed subtree when safe.
+        // Compatibility overload for inline-style mutations.
         void                         invalidate_styles(const std::shared_ptr<element>& root);
+        // Queue an attribute mutation using the cached selector dependency
+        // summary. Unsafe sibling/nested/pseudo-element dependencies upgrade
+        // to a full stylesheet match.
+        void                         invalidate_attribute_styles(const std::shared_ptr<element>& root,
+                                                                 const char* attribute);
+        // Structural mutations always rebuild render items, but their CSS
+        // matching can normally stay within the affected parent subtree.
+        void                         invalidate_structure_styles(const std::shared_ptr<element>& root);
+        const style_invalidation_stats& style_stats() const;
+        void                            reset_style_stats();
         std::shared_ptr<const element> get_over_element() const
         {
             return m_over_element;
         }
 
         void append_children_from_string(element& parent, const char* str, bool replace_existing);
-        /** Attach a caller-created element and initialise its styles/render item. */
+        /** Replace an element's children and schedule the required rebuild. */
+        bool set_inner_html(const std::shared_ptr<element>& parent, const char* str);
+        /** Attach a caller-created element and schedule the required rebuild. */
         bool append_child(const std::shared_ptr<element>& parent, const std::shared_ptr<element>& child);
+        /** Detach a direct child and schedule the required rebuild. */
+        bool remove_child(const std::shared_ptr<element>& parent, const std::shared_ptr<element>& child);
+        /** Replace a direct child and schedule the required rebuild. */
+        bool replace_child(const std::shared_ptr<element>& parent, const std::shared_ptr<element>& replacement,
+                           const std::shared_ptr<element>& child);
         void dump(dumper& cout);
 
         // see doc/document_createFromString.txt
@@ -163,6 +214,12 @@ namespace litehtml
         void         create_node(void* gnode, elements_list& elements, bool parseTextNode, bool process_root);
         bool         update_media_lists(const media_features& features);
         void         fix_tables_layout();
+        void         rebuild_selector_dependencies();
+        void         rebuild_all_styles();
+        void         prepare_scoped_styles();
+        bool         rematch_styles(const std::shared_ptr<element>& root, bool match_selectors);
+        void         schedule_scoped_style_match(const std::shared_ptr<element>& root, bool match_selectors);
+        bool         is_connected(const std::shared_ptr<element>& root) const;
         void         rebuild_render_tree();
         void fix_table_children(const std::shared_ptr<render_item>& el_ptr, style_display disp, const char* disp_str);
         void fix_table_parent(const std::shared_ptr<render_item>& el_ptr, style_display disp, const char* disp_str);
