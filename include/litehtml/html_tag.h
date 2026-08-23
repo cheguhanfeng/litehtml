@@ -8,7 +8,7 @@
 #include "style.h"
 #include "stylesheet.h"
 #include "table.h"
-#include <map>
+#include <vector>
 
 namespace litehtml
 {
@@ -38,7 +38,12 @@ namespace litehtml
             bool has_no_pseudo = false;
             bool has_with_pseudo = false;
         };
-        std::map<const css_selector*, selector_cache_value> m_selector_cache;
+        struct selector_cache_entry
+        {
+            const css_selector* selector = nullptr;
+            selector_cache_value value;
+        };
+        std::vector<selector_cache_entry> m_selector_cache;
 
         void select_all(const css_selector& selector, elements_list& res) override;
 

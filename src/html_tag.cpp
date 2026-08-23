@@ -10,6 +10,7 @@
 #include "html_microsyntaxes.h"
 #include "html_tag.h"
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 
 namespace
@@ -353,10 +354,11 @@ namespace litehtml
             get_document()->record_selector_cache(false, true, false, false, 0, m_selector_cache.size());
             return result;
         }
-        auto found = m_selector_cache.find(&selector);
+        auto found = std::find_if(m_selector_cache.begin(), m_selector_cache.end(),
+            [&selector](const selector_cache_entry& entry) { return entry.selector == &selector; });
         if(found != m_selector_cache.end())
         {
-            const selector_cache_value& value = found->second;
+            const selector_cache_value& value = found->value;
             const bool available = apply_pseudo ? value.has_with_pseudo : value.has_no_pseudo;
             if(available)
             {
@@ -378,10 +380,16 @@ namespace litehtml
         if(found == m_selector_cache.end() && m_selector_cache.size() >= max_entries_per_element)
         {
             m_selector_cache.clear();
+            found = m_selector_cache.end();
             evicted = true;
         }
         const int result = select(selector, apply_pseudo);
-        selector_cache_value& value = m_selector_cache[&selector];
+        if(found == m_selector_cache.end())
+        {
+            m_selector_cache.push_back({&selector, {}});
+            found = std::prev(m_selector_cache.end());
+        }
+        selector_cache_value& value = found->value;
         if(apply_pseudo) { value.with_pseudo = result; value.has_with_pseudo = true; }
         else { value.no_pseudo = result; value.has_no_pseudo = true; }
         const uint64_t validation_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
