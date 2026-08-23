@@ -5,6 +5,8 @@
 
 #include "css_selector.h"
 #include "css_tokenizer.h"
+#include <cstdint>
+#include <map>
 
 namespace litehtml
 {
@@ -62,6 +64,33 @@ namespace litehtml
     {
         css_selector::vector m_selectors;
 
+        struct selector_index
+        {
+            std::map<string_id, std::vector<size_t>> ids;
+            std::map<string_id, std::vector<size_t>> classes;
+            std::map<string_id, std::vector<size_t>> tags;
+            std::map<std::string, std::vector<size_t>> attributes;
+            std::vector<size_t> universal;
+            uint64_t build_ns = 0;
+            size_t bytes = 0;
+            bool enabled = false;
+        };
+        selector_index m_index;
+
+      public:
+        struct selector_index_diagnostics
+        {
+            uint64_t build_ns = 0;
+            uint64_t query_count = 0;
+            uint64_t total_rules_considered = 0;
+            uint64_t candidate_rules = 0;
+            size_t bytes = 0;
+            bool enabled = false;
+        };
+
+      private:
+        mutable selector_index_diagnostics m_index_diagnostics;
+
       public:
         const css_selector::vector& selectors() const
         {
@@ -74,12 +103,20 @@ namespace litehtml
 
         void sort_selectors();
 
+        css_selector::vector candidate_selectors(string_id tag, string_id id,
+                                                  const std::vector<string_id>& classes,
+                                                  const string_map& attributes) const;
+        const selector_index_diagnostics& index_diagnostics() const { return m_index_diagnostics; }
+        static void set_selector_index_enabled(bool enabled);
+        static bool selector_index_enabled();
+
       private:
         bool parse_style_rule(const raw_rule::ptr& rule, const std::string& baseurl,
                               const std::shared_ptr<document>& doc, const media_query_list_list::ptr& media);
         void parse_import_rule(const raw_rule::ptr& rule, const std::string& baseurl,
                                const std::shared_ptr<document>& doc, const media_query_list_list::ptr& media);
         void add_selector(const css_selector::ptr& selector);
+        void rebuild_selector_index();
     };
 
     inline void css::add_selector(const css_selector::ptr& selector)

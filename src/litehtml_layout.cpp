@@ -657,6 +657,27 @@ LITEHTML_API void litehtml_layout_reset_style_invalidation_stats(litehtml_layout
 {
     if(service && service->doc) service->doc->reset_style_stats();
 }
+
+LITEHTML_API void litehtml_layout_set_selector_index_enabled(int enabled)
+{
+    litehtml::css::set_selector_index_enabled(enabled != 0);
+}
+
+LITEHTML_API int litehtml_layout_get_selector_index_stats(
+    const litehtml_layout_service* service, litehtml_selector_index_stats* out_stats)
+{
+    if(!out_stats) return 0;
+    *out_stats = {};
+    if(!service || !service->doc) return 0;
+    const auto stats = service->doc->selector_index_stats();
+    out_stats->build_ns = stats.build_ns;
+    out_stats->query_count = stats.query_count;
+    out_stats->total_rules_considered = stats.total_rules_considered;
+    out_stats->candidate_rules = stats.candidate_rules;
+    out_stats->index_bytes = stats.bytes;
+    out_stats->enabled = stats.enabled ? 1 : 0;
+    return 1;
+}
 #endif
 
 LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,

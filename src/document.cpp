@@ -949,6 +949,23 @@ namespace litehtml
         m_style_invalidation_stats = {};
     }
 
+    css::selector_index_diagnostics document::selector_index_stats() const
+    {
+        css::selector_index_diagnostics out;
+        auto merge = [&out](const css::selector_index_diagnostics& value) {
+            out.build_ns += value.build_ns;
+            out.query_count += value.query_count;
+            out.total_rules_considered += value.total_rules_considered;
+            out.candidate_rules += value.candidate_rules;
+            out.bytes += value.bytes;
+            out.enabled = out.enabled || value.enabled;
+        };
+        merge(m_master_css.index_diagnostics());
+        merge(m_styles.index_diagnostics());
+        merge(m_user_css.index_diagnostics());
+        return out;
+    }
+
     void document::prepare_scoped_styles()
     {
         if(m_styles_dirty)

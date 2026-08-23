@@ -175,6 +175,7 @@ namespace litehtml
         void                         invalidate_structure_styles(const std::shared_ptr<element>& root);
         const style_invalidation_stats& style_stats() const;
         void                            reset_style_stats();
+        css::selector_index_diagnostics selector_index_stats() const;
         std::shared_ptr<const element> get_over_element() const
         {
             return m_over_element;

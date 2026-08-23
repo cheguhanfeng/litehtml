@@ -226,7 +226,8 @@ namespace litehtml
 
     void litehtml::html_tag::apply_stylesheet(const litehtml::css& stylesheet)
     {
-        for(const auto& sel : stylesheet.selectors())
+        const auto candidates = stylesheet.candidate_selectors(m_tag, m_id, m_classes, m_attrs);
+        for(const auto& sel : candidates)
         {
             // optimization
             {

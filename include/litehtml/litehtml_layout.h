@@ -258,6 +258,20 @@ typedef struct litehtml_style_invalidation_stats
 LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
     const litehtml_layout_service* service, litehtml_style_invalidation_stats* out_stats);
 LITEHTML_API void litehtml_layout_reset_style_invalidation_stats(litehtml_layout_service* service);
+
+typedef struct litehtml_selector_index_stats
+{
+    uint64_t build_ns;
+    uint64_t query_count;
+    uint64_t total_rules_considered;
+    uint64_t candidate_rules;
+    uint64_t index_bytes;
+    int enabled;
+} litehtml_selector_index_stats;
+
+LITEHTML_API void litehtml_layout_set_selector_index_enabled(int enabled);
+LITEHTML_API int litehtml_layout_get_selector_index_stats(
+    const litehtml_layout_service* service, litehtml_selector_index_stats* out_stats);
 #endif
 
 /* 布局模式（对应 litehtml render_type，顺序必须与 litehtml 一致） */
