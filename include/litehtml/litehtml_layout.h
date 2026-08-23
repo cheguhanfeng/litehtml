@@ -255,6 +255,9 @@ typedef struct litehtml_style_invalidation_stats
     uint64_t render_tree_fallback_count;
     uint64_t containment_hit_count;
     uint64_t containment_fallback_count;
+    uint64_t geometry_cache_hit_count;
+    uint64_t geometry_cache_miss_count;
+    uint64_t layout_visited_elements;
 } litehtml_style_invalidation_stats;
 
 LITEHTML_API void litehtml_layout_get_style_invalidation_stats(

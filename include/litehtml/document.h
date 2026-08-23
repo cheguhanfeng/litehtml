@@ -30,6 +30,9 @@ namespace litehtml
         uint64_t render_tree_fallback_count = 0;
         uint64_t containment_hit_count = 0;
         uint64_t containment_fallback_count = 0;
+        uint64_t geometry_cache_hit_count = 0;
+        uint64_t geometry_cache_miss_count = 0;
+        uint64_t layout_visited_elements = 0;
     };
 
     struct selector_cache_stats
@@ -237,7 +240,8 @@ namespace litehtml
         void         rebuild_selector_dependencies();
         void         rebuild_all_styles();
         void         prepare_scoped_styles();
-        bool         rematch_styles(const std::shared_ptr<element>& root, bool match_selectors);
+        bool         rematch_styles(const std::shared_ptr<element>& root, bool match_selectors,
+                                    bool* layout_changed = nullptr);
         void         schedule_scoped_style_match(const std::shared_ptr<element>& root, bool match_selectors);
         bool         is_connected(const std::shared_ptr<element>& root) const;
         void         rebuild_render_tree();

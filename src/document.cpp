@@ -80,13 +80,36 @@ namespace litehtml
             element_position position;
             string_id      tag;
             size_t         child_count;
+            uint64_t       layout_signature;
         };
+
+        uint64_t layout_signature(const css_properties& css)
+        {
+            uint64_t hash = 1469598103934665603ull;
+            auto add = [&hash](const std::string& value) {
+                for(const unsigned char ch : value) { hash ^= ch; hash *= 1099511628211ull; }
+                hash ^= 0xff; hash *= 1099511628211ull;
+            };
+            add(std::to_string(static_cast<int>(css.get_display())));
+            add(std::to_string(static_cast<int>(css.get_position())));
+            add(std::to_string(static_cast<int>(css.get_float())));
+            add(std::to_string(static_cast<int>(css.get_overflow())));
+            add(css.get_width().to_string()); add(css.get_height().to_string());
+            add(css.get_min_width().to_string()); add(css.get_min_height().to_string());
+            add(css.get_max_width().to_string()); add(css.get_max_height().to_string());
+            add(css.get_margins().to_string()); add(css.get_padding().to_string());
+            add(std::to_string(static_cast<float>(css.get_font_size())));
+            add(css.get_flex_basis().to_string()); add(std::to_string(css.get_flex_grow()));
+            add(std::to_string(css.get_flex_shrink()));
+            add(css.get_grid_template_columns()); add(css.get_grid_template_rows());
+            return hash;
+        }
 
         void collect_style_topology(const element::ptr& root, std::vector<style_topology_entry>& result)
         {
             if(!root) return;
             result.push_back({root.get(), root->css().get_display(), root->css().get_position(), root->tag(),
-                              root->children().size()});
+                              root->children().size(), layout_signature(root->css())});
             for(const auto& child : root->children())
             {
                 collect_style_topology(child, result);
@@ -680,7 +703,8 @@ namespace litehtml
         }
         if(containment_hit) ++m_style_invalidation_stats.containment_hit_count;
 
-        const bool topology_changed = rematch_styles(root, m_scoped_selector_match_required);
+        bool layout_changed = true;
+        const bool topology_changed = rematch_styles(root, m_scoped_selector_match_required, &layout_changed);
         m_scoped_selector_match_required = false;
         m_scoped_styles_dirty_root.reset();
         auto item = layout_root->get_render_item();
@@ -692,6 +716,15 @@ namespace litehtml
             m_render_tree_dirty = true;
             return render(max_width, rt);
         }
+        if(!layout_changed)
+        {
+            ++m_style_invalidation_stats.geometry_cache_hit_count;
+            return 0_px;
+        }
+        ++m_style_invalidation_stats.geometry_cache_miss_count;
+        std::vector<style_topology_entry> layout_nodes;
+        collect_style_topology(layout_root, layout_nodes);
+        m_style_invalidation_stats.layout_visited_elements += layout_nodes.size();
 
         position viewport;
         m_container->get_viewport(viewport);
@@ -906,7 +939,7 @@ namespace litehtml
         scan_stylesheet(m_user_css);
     }
 
-    bool document::rematch_styles(const std::shared_ptr<element>& root, bool match_selectors)
+    bool document::rematch_styles(const std::shared_ptr<element>& root, bool match_selectors, bool* layout_changed)
     {
         if(!root) return false;
         const auto started = std::chrono::steady_clock::now();
@@ -933,6 +966,7 @@ namespace litehtml
 
         collect_style_topology(root, after);
         bool topology_changed = before.size() != after.size();
+        bool geometry_changed = topology_changed;
         for(size_t i = 0; !topology_changed && i < before.size(); ++i)
         {
             if(before[i].node != after[i].node || before[i].display != after[i].display ||
@@ -941,7 +975,9 @@ namespace litehtml
             {
                 topology_changed = true;
             }
+            if(before[i].layout_signature != after[i].layout_signature) geometry_changed = true;
         }
+        if(layout_changed) *layout_changed = geometry_changed;
         const auto elapsed = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                         std::chrono::steady_clock::now() - started)
                                                         .count());
