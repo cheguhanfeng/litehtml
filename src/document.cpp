@@ -868,6 +868,7 @@ namespace litehtml
 
         if(match_selectors)
         {
+            root->invalidate_selector_cache();
             root->reset_matched_styles();
             root->apply_stylesheet(m_master_css);
             root->parse_attributes();
@@ -964,6 +965,28 @@ namespace litehtml
         merge(m_styles.index_diagnostics());
         merge(m_user_css.index_diagnostics());
         return out;
+    }
+
+    void document::record_selector_cache(bool hit, bool bypass, bool stale, bool evicted, uint64_t validation_ns, size_t entries)
+    {
+        if(hit) ++m_selector_cache_stats.hit_count;
+        else if(bypass) ++m_selector_cache_stats.bypass_count;
+        else ++m_selector_cache_stats.miss_count;
+        if(stale) ++m_selector_cache_stats.stale_count;
+        if(evicted) ++m_selector_cache_stats.evict_count;
+        m_selector_cache_stats.validation_ns += validation_ns;
+        m_selector_cache_stats.peak_entries = std::max<uint64_t>(m_selector_cache_stats.peak_entries, entries);
+    }
+
+    void document::benchmark_refresh_selector_matches()
+    {
+        if(!m_root) return;
+        m_root->reset_matched_styles();
+        m_root->apply_stylesheet(m_master_css);
+        m_root->parse_attributes();
+        m_root->apply_stylesheet(m_styles);
+        m_root->apply_stylesheet(m_user_css);
+        m_root->compute_styles();
     }
 
     void document::prepare_scoped_styles()

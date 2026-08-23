@@ -30,6 +30,17 @@ namespace litehtml
         uint64_t render_tree_fallback_count = 0;
     };
 
+    struct selector_cache_stats
+    {
+        uint64_t hit_count = 0;
+        uint64_t miss_count = 0;
+        uint64_t bypass_count = 0;
+        uint64_t stale_count = 0;
+        uint64_t evict_count = 0;
+        uint64_t validation_ns = 0;
+        uint64_t peak_entries = 0;
+    };
+
     struct css_text
     {
         using vector = std::vector<css_text>;
@@ -110,6 +121,7 @@ namespace litehtml
         bool                                    m_scoped_selector_match_required = false;
         std::weak_ptr<element>                  m_scoped_styles_dirty_root;
         style_invalidation_stats                m_style_invalidation_stats;
+        selector_cache_stats                    m_selector_cache_stats;
 
       public:
         document(document_container* objContainer);
@@ -176,6 +188,9 @@ namespace litehtml
         const style_invalidation_stats& style_stats() const;
         void                            reset_style_stats();
         css::selector_index_diagnostics selector_index_stats() const;
+        const selector_cache_stats& selector_cache_diagnostics() const { return m_selector_cache_stats; }
+        void record_selector_cache(bool hit, bool bypass, bool stale, bool evicted, uint64_t validation_ns, size_t entries);
+        void benchmark_refresh_selector_matches();
         std::shared_ptr<const element> get_over_element() const
         {
             return m_over_element;

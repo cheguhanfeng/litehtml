@@ -678,6 +678,35 @@ LITEHTML_API int litehtml_layout_get_selector_index_stats(
     out_stats->enabled = stats.enabled ? 1 : 0;
     return 1;
 }
+
+LITEHTML_API void litehtml_layout_set_selector_cache_mode(int mode)
+{
+    litehtml::html_tag::set_selector_cache_mode(mode);
+}
+
+LITEHTML_API int litehtml_layout_get_selector_cache_stats(
+    const litehtml_layout_service* service, litehtml_selector_cache_stats* out_stats)
+{
+    if(!out_stats) return 0;
+    *out_stats = {};
+    if(!service || !service->doc) return 0;
+    const auto& stats = service->doc->selector_cache_diagnostics();
+    out_stats->hit_count = stats.hit_count;
+    out_stats->miss_count = stats.miss_count;
+    out_stats->bypass_count = stats.bypass_count;
+    out_stats->stale_count = stats.stale_count;
+    out_stats->evict_count = stats.evict_count;
+    out_stats->validation_ns = stats.validation_ns;
+    out_stats->peak_entries_per_element = stats.peak_entries;
+    return 1;
+}
+
+LITEHTML_API int litehtml_layout_benchmark_refresh_selector_matches(litehtml_layout_service* service)
+{
+    if(!service || !service->doc) return 0;
+    service->doc->benchmark_refresh_selector_matches();
+    return 1;
+}
 #endif
 
 LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
