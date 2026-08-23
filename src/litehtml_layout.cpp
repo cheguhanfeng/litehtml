@@ -651,6 +651,8 @@ LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
     out_stats->subtree_match_ns = stats.subtree_match_ns;
     out_stats->full_match_ns = stats.full_match_ns;
     out_stats->render_tree_fallback_count = stats.render_tree_fallback_count;
+    out_stats->containment_hit_count = stats.containment_hit_count;
+    out_stats->containment_fallback_count = stats.containment_fallback_count;
 }
 
 LITEHTML_API void litehtml_layout_reset_style_invalidation_stats(litehtml_layout_service* service)

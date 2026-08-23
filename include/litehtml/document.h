@@ -28,6 +28,8 @@ namespace litehtml
         uint64_t subtree_match_ns          = 0;
         uint64_t full_match_ns             = 0;
         uint64_t render_tree_fallback_count = 0;
+        uint64_t containment_hit_count = 0;
+        uint64_t containment_fallback_count = 0;
     };
 
     struct selector_cache_stats

@@ -98,6 +98,16 @@ namespace litehtml
             const auto position = el.css().get_position();
             return position == element_position_absolute || position == element_position_fixed;
         }
+
+        bool is_safe_layout_containment(const element& el)
+        {
+            const auto& css = el.css();
+            const auto& width = css.get_width();
+            const auto& height = css.get_height();
+            return css.has_layout_containment() && !css.has_unsupported_containment() &&
+                   !width.is_predefined() && !height.is_predefined() &&
+                   width.units() != css_units_percentage && height.units() != css_units_percentage;
+        }
     } // namespace
 
     document::document(document_container* container)
@@ -647,20 +657,34 @@ namespace litehtml
             return render(max_width, rt);
         }
 
-        // Only absolute/fixed subtrees are independent of normal-flow sibling
-        // placement. Relative positioning still participates in normal flow.
+        // Absolute/fixed subtrees are independent by construction. A normal-flow
+        // subtree may also stop at a proven fixed-size layout containment box.
         const auto old_display  = root->css().get_display();
         const auto old_position = root->css().get_position();
-        if(!is_out_of_flow_positioned(*root))
+        auto layout_root = root;
+        bool containment_candidate = false;
+        for(auto node = root; node; node = node->parent())
         {
+            if(node->css().has_layout_containment() || node->css().has_unsupported_containment())
+            {
+                containment_candidate = true;
+                if(is_safe_layout_containment(*node)) layout_root = node;
+                break;
+            }
+        }
+        const bool containment_hit = layout_root != root || is_safe_layout_containment(*root);
+        if(!is_out_of_flow_positioned(*root) && !containment_hit)
+        {
+            if(containment_candidate) ++m_style_invalidation_stats.containment_fallback_count;
             return render(max_width, rt);
         }
+        if(containment_hit) ++m_style_invalidation_stats.containment_hit_count;
 
         const bool topology_changed = rematch_styles(root, m_scoped_selector_match_required);
         m_scoped_selector_match_required = false;
         m_scoped_styles_dirty_root.reset();
-        auto item = root->get_render_item();
-        if(topology_changed || !item || !is_out_of_flow_positioned(*root) || root->css().get_display() != old_display ||
+        auto item = layout_root->get_render_item();
+        if(topology_changed || !item || (!is_out_of_flow_positioned(*root) && !containment_hit) || root->css().get_display() != old_display ||
            root->css().get_position() != old_position)
         {
             // A changed render-item kind or positioning mode requires rebuilding
@@ -677,7 +701,8 @@ namespace litehtml
         cb_context.height = viewport.height;
         cb_context.height.type = containing_block_context::cbc_value_type_absolute;
         const auto placement = item->pos();
-        const auto result = item->render(placement.x, placement.y, cb_context, nullptr);
+        const auto result = item->render(placement.x - item->content_offset_left(),
+                                         placement.y - item->content_offset_top(), cb_context, nullptr);
         if(m_root_render->fetch_positioned())
         {
             m_fixed_boxes.clear();

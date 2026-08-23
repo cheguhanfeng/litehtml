@@ -253,6 +253,8 @@ typedef struct litehtml_style_invalidation_stats
     uint64_t subtree_match_ns;
     uint64_t full_match_ns;
     uint64_t render_tree_fallback_count;
+    uint64_t containment_hit_count;
+    uint64_t containment_fallback_count;
 } litehtml_style_invalidation_stats;
 
 LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
