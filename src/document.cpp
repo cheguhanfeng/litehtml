@@ -746,7 +746,8 @@ namespace litehtml
         invalidate_styles();
     }
 
-    void document::invalidate_attribute_styles(const std::shared_ptr<element>& root, const char* attribute)
+    void document::invalidate_attribute_styles(const std::shared_ptr<element>& root, const char* attribute,
+                                                const char* old_value, const char* new_value)
     {
         if(!m_finalized || !attribute || !is_connected(root)) return;
 
@@ -756,13 +757,35 @@ namespace litehtml
         {
             scope = found->second;
         }
-        if(name == _id("class") && static_cast<int>(m_class_dependency) > static_cast<int>(scope))
+        auto merge_scope = [&scope](style_match_scope dependency) {
+            if(static_cast<int>(dependency) > static_cast<int>(scope)) scope = dependency;
+        };
+        if(name == _id("class"))
         {
-            scope = m_class_dependency;
+            auto merge_classes = [&](const char* value) {
+                if(!value) return;
+                std::string normalized = value;
+                if(mode() == quirks_mode) lcase(normalized);
+                for(const auto& token : split_string(normalized, whitespace, "", ""))
+                {
+                    if(const auto found = m_class_dependencies.find(_id(token)); found != m_class_dependencies.end())
+                        merge_scope(found->second);
+                }
+            };
+            merge_classes(old_value);
+            merge_classes(new_value);
         }
-        if(name == _id("id") && static_cast<int>(m_id_dependency) > static_cast<int>(scope))
+        if(name == _id("id"))
         {
-            scope = m_id_dependency;
+            auto merge_id = [&](const char* value) {
+                if(!value || !*value) return;
+                std::string normalized = value;
+                if(mode() == quirks_mode) lcase(normalized);
+                if(const auto found = m_id_dependencies.find(_id(normalized)); found != m_id_dependencies.end())
+                    merge_scope(found->second);
+            };
+            merge_id(old_value);
+            merge_id(new_value);
         }
         if(scope == style_match_scope::full)
         {
@@ -791,8 +814,8 @@ namespace litehtml
     void document::rebuild_selector_dependencies()
     {
         m_attribute_dependencies.clear();
-        m_class_dependency = style_match_scope::none;
-        m_id_dependency = style_match_scope::none;
+        m_class_dependencies.clear();
+        m_id_dependencies.clear();
         m_structure_requires_full_match = false;
 
         auto merge_scope = [](style_match_scope& current, style_match_scope incoming) {
@@ -801,10 +824,10 @@ namespace litehtml
         auto record = [&](const css_attribute_selector& attr, style_match_scope scope) {
             if(attr.type == select_class)
             {
-                merge_scope(m_class_dependency, scope);
+                merge_scope(m_class_dependencies[attr.name], scope);
             } else if(attr.type == select_id)
             {
-                merge_scope(m_id_dependency, scope);
+                merge_scope(m_id_dependencies[attr.name], scope);
             } else if(attr.type == select_attr)
             {
                 merge_scope(m_attribute_dependencies[attr.name], scope);

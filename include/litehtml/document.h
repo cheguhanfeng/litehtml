@@ -115,8 +115,8 @@ namespace litehtml
         // attribute mutation can then decide whether matching is confined to
         // its subtree or must conservatively cover the full document.
         std::map<string_id, style_match_scope>  m_attribute_dependencies;
-        style_match_scope                       m_class_dependency = style_match_scope::none;
-        style_match_scope                       m_id_dependency    = style_match_scope::none;
+        std::map<string_id, style_match_scope>  m_class_dependencies;
+        std::map<string_id, style_match_scope>  m_id_dependencies;
         bool                                    m_structure_requires_full_match = false;
         bool                                    m_scoped_selector_match_required = false;
         std::weak_ptr<element>                  m_scoped_styles_dirty_root;
@@ -181,7 +181,9 @@ namespace litehtml
         // summary. Unsafe sibling/nested/pseudo-element dependencies upgrade
         // to a full stylesheet match.
         void                         invalidate_attribute_styles(const std::shared_ptr<element>& root,
-                                                                 const char* attribute);
+                                                                 const char* attribute,
+                                                                 const char* old_value = nullptr,
+                                                                 const char* new_value = nullptr);
         // Structural mutations always rebuild render items, but their CSS
         // matching can normally stay within the affected parent subtree.
         void                         invalidate_structure_styles(const std::shared_ptr<element>& root);

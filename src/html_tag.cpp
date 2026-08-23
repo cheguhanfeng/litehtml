@@ -133,6 +133,7 @@ namespace litehtml
             {
                 return;
             }
+            const std::string old_value = existing == m_attrs.end() ? std::string() : existing->second;
             m_attrs[name] = _val;
 
             if(name == "class")
@@ -160,7 +161,7 @@ namespace litehtml
                 m_id = _id(val);
             }
 
-            get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str());
+            get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str(), old_value.c_str(), _val);
         }
     }
 
@@ -170,10 +171,11 @@ namespace litehtml
         const std::string name = lowcase(_name);
         const auto found = m_attrs.find(name);
         if(found == m_attrs.end()) return false;
+        const std::string old_value = found->second;
         m_attrs.erase(found);
         if(name == "class") { m_classes.clear(); m_str_classes.clear(); }
         else if(name == "id") { m_id = _id(""); }
-        get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str());
+        get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str(), old_value.c_str(), nullptr);
         return true;
     }
 
