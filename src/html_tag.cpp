@@ -9,6 +9,23 @@
 #include "document_container.h"
 #include "html_microsyntaxes.h"
 #include "html_tag.h"
+#include <atomic>
+#include <algorithm>
+#include <chrono>
+
+namespace
+{
+    std::atomic<int> g_selector_cache_mode{1}; // 0 Off, 1 On, 2 Analyze
+
+    bool selector_cacheable(const litehtml::css_selector& selector)
+    {
+        if(selector.m_left) return false; // ancestor/sibling generations are not guessed
+        for(const auto& attr : selector.m_right.m_attrs)
+            if(attr.type == litehtml::select_pseudo_class || attr.type == litehtml::select_pseudo_element)
+                return false;
+        return true;
+    }
+}
 #include "internal.h"
 #include "iterators.h"
 #include "line_box.h"
@@ -116,6 +133,7 @@ namespace litehtml
             {
                 return;
             }
+            const std::string old_value = existing == m_attrs.end() ? std::string() : existing->second;
             m_attrs[name] = _val;
 
             if(name == "class")
@@ -143,7 +161,7 @@ namespace litehtml
                 m_id = _id(val);
             }
 
-            get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str());
+            get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str(), old_value.c_str(), _val);
         }
     }
 
@@ -153,10 +171,11 @@ namespace litehtml
         const std::string name = lowcase(_name);
         const auto found = m_attrs.find(name);
         if(found == m_attrs.end()) return false;
+        const std::string old_value = found->second;
         m_attrs.erase(found);
         if(name == "class") { m_classes.clear(); m_str_classes.clear(); }
         else if(name == "id") { m_id = _id(""); }
-        get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str());
+        get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str(), old_value.c_str(), nullptr);
         return true;
     }
 
@@ -226,7 +245,8 @@ namespace litehtml
 
     void litehtml::html_tag::apply_stylesheet(const litehtml::css& stylesheet)
     {
-        for(const auto& sel : stylesheet.selectors())
+        const auto candidates = stylesheet.candidate_selectors(m_tag, m_id, m_classes, m_attrs);
+        for(const auto& sel : candidates)
         {
             // optimization
             {
@@ -246,7 +266,7 @@ namespace litehtml
                 }
             }
 
-            uint32_t apply = select(*sel, false);
+            uint32_t apply = static_cast<uint32_t>(select_cached(*sel, false));
 
             if(apply != select_no_match)
             {
@@ -293,7 +313,7 @@ namespace litehtml
 
                     if(apply & select_match_pseudo_class)
                     {
-                        if(select(*sel, true))
+                        if(select_cached(*sel, true))
                         {
                             if((apply & (select_match_with_after | select_match_with_before)))
                             {
@@ -324,6 +344,70 @@ namespace litehtml
                 el->apply_stylesheet(stylesheet);
             }
         }
+    }
+
+    int litehtml::html_tag::select_cached(const css_selector& selector, bool apply_pseudo)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        const int mode = selector_cache_mode();
+        if(mode == 0 || !selector_cacheable(selector))
+        {
+            const int result = select(selector, apply_pseudo);
+            get_document()->record_selector_cache(false, true, false, false, 0, m_selector_cache.size());
+            return result;
+        }
+        auto found = std::find_if(m_selector_cache.begin(), m_selector_cache.end(),
+            [&selector](const selector_cache_entry& entry) { return entry.selector == &selector; });
+        if(found != m_selector_cache.end())
+        {
+            const selector_cache_value& value = found->value;
+            const bool available = apply_pseudo ? value.has_with_pseudo : value.has_no_pseudo;
+            if(available)
+            {
+                const int cached = apply_pseudo ? value.with_pseudo : value.no_pseudo;
+                const uint64_t validation_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - started).count());
+                if(mode == 2)
+                {
+                    const int fresh = select(selector, apply_pseudo);
+                    get_document()->record_selector_cache(true, false, fresh != cached, false, validation_ns, m_selector_cache.size());
+                    return fresh; // Analyze never changes production output
+                }
+                get_document()->record_selector_cache(true, false, false, false, validation_ns, m_selector_cache.size());
+                return cached;
+            }
+        }
+        bool evicted = false;
+        constexpr size_t max_entries_per_element = 128;
+        if(found == m_selector_cache.end() && m_selector_cache.size() >= max_entries_per_element)
+        {
+            m_selector_cache.clear();
+            found = m_selector_cache.end();
+            evicted = true;
+        }
+        const int result = select(selector, apply_pseudo);
+        if(found == m_selector_cache.end())
+        {
+            m_selector_cache.push_back({&selector, {}});
+            found = std::prev(m_selector_cache.end());
+        }
+        selector_cache_value& value = found->value;
+        if(apply_pseudo) { value.with_pseudo = result; value.has_with_pseudo = true; }
+        else { value.no_pseudo = result; value.has_no_pseudo = true; }
+        const uint64_t validation_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - started).count());
+        get_document()->record_selector_cache(false, false, false, evicted, validation_ns, m_selector_cache.size());
+        return result;
+    }
+
+    void litehtml::html_tag::set_selector_cache_mode(int mode)
+    {
+        g_selector_cache_mode.store(std::max(0, std::min(2, mode)), std::memory_order_relaxed);
+    }
+
+    int litehtml::html_tag::selector_cache_mode()
+    {
+        return g_selector_cache_mode.load(std::memory_order_relaxed);
     }
 
     void litehtml::html_tag::get_content_size(size& sz, pixel_t max_width)
@@ -1099,6 +1183,7 @@ namespace litehtml
                 ret = true;
             }
         }
+        if(ret) invalidate_selector_cache();
         return ret;
     }
 
@@ -1540,6 +1625,12 @@ namespace litehtml
             child->reset_matched_styles();
         }
         m_style.clear();
+    }
+
+    void litehtml::html_tag::invalidate_selector_cache()
+    {
+        m_selector_cache.clear();
+        for(auto& child : m_children) child->invalidate_selector_cache();
     }
 
     void litehtml::html_tag::refresh_styles()

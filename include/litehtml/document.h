@@ -28,6 +28,22 @@ namespace litehtml
         uint64_t subtree_match_ns          = 0;
         uint64_t full_match_ns             = 0;
         uint64_t render_tree_fallback_count = 0;
+        uint64_t containment_hit_count = 0;
+        uint64_t containment_fallback_count = 0;
+        uint64_t geometry_cache_hit_count = 0;
+        uint64_t geometry_cache_miss_count = 0;
+        uint64_t layout_visited_elements = 0;
+    };
+
+    struct selector_cache_stats
+    {
+        uint64_t hit_count = 0;
+        uint64_t miss_count = 0;
+        uint64_t bypass_count = 0;
+        uint64_t stale_count = 0;
+        uint64_t evict_count = 0;
+        uint64_t validation_ns = 0;
+        uint64_t peak_entries = 0;
     };
 
     struct css_text
@@ -104,12 +120,13 @@ namespace litehtml
         // attribute mutation can then decide whether matching is confined to
         // its subtree or must conservatively cover the full document.
         std::map<string_id, style_match_scope>  m_attribute_dependencies;
-        style_match_scope                       m_class_dependency = style_match_scope::none;
-        style_match_scope                       m_id_dependency    = style_match_scope::none;
+        std::map<string_id, style_match_scope>  m_class_dependencies;
+        std::map<string_id, style_match_scope>  m_id_dependencies;
         bool                                    m_structure_requires_full_match = false;
         bool                                    m_scoped_selector_match_required = false;
         std::weak_ptr<element>                  m_scoped_styles_dirty_root;
         style_invalidation_stats                m_style_invalidation_stats;
+        selector_cache_stats                    m_selector_cache_stats;
 
       public:
         document(document_container* objContainer);
@@ -169,12 +186,18 @@ namespace litehtml
         // summary. Unsafe sibling/nested/pseudo-element dependencies upgrade
         // to a full stylesheet match.
         void                         invalidate_attribute_styles(const std::shared_ptr<element>& root,
-                                                                 const char* attribute);
+                                                                 const char* attribute,
+                                                                 const char* old_value = nullptr,
+                                                                 const char* new_value = nullptr);
         // Structural mutations always rebuild render items, but their CSS
         // matching can normally stay within the affected parent subtree.
         void                         invalidate_structure_styles(const std::shared_ptr<element>& root);
         const style_invalidation_stats& style_stats() const;
         void                            reset_style_stats();
+        css::selector_index_diagnostics selector_index_stats() const;
+        const selector_cache_stats& selector_cache_diagnostics() const { return m_selector_cache_stats; }
+        void record_selector_cache(bool hit, bool bypass, bool stale, bool evicted, uint64_t validation_ns, size_t entries);
+        void benchmark_refresh_selector_matches();
         std::shared_ptr<const element> get_over_element() const
         {
             return m_over_element;
@@ -217,7 +240,8 @@ namespace litehtml
         void         rebuild_selector_dependencies();
         void         rebuild_all_styles();
         void         prepare_scoped_styles();
-        bool         rematch_styles(const std::shared_ptr<element>& root, bool match_selectors);
+        bool         rematch_styles(const std::shared_ptr<element>& root, bool match_selectors,
+                                    bool* layout_changed = nullptr);
         void         schedule_scoped_style_match(const std::shared_ptr<element>& root, bool match_selectors);
         bool         is_connected(const std::shared_ptr<element>& root) const;
         void         rebuild_render_tree();

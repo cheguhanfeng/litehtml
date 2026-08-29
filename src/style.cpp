@@ -597,6 +597,7 @@ namespace litehtml
         case _grid_template_rows_:
         case _backdrop_filter_:
         case __webkit_backdrop_filter_:
+        case _contain_:
             str = get_repr(value, 0, -1, true);
             add_parsed_property(name, property_value(str, important));
             break;

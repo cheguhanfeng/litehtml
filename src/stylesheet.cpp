@@ -1,5 +1,12 @@
 #include "html.h"
 #include "stylesheet.h"
+#include <chrono>
+#include <atomic>
+
+namespace
+{
+    std::atomic<bool> g_selector_index_enabled{true};
+}
 #include "css_parser.h"
 #include "document.h"
 #include "document_container.h"
@@ -308,6 +315,92 @@ namespace litehtml
     {
         std::sort(m_selectors.begin(), m_selectors.end(),
                   [](const css_selector::ptr& v1, const css_selector::ptr& v2) { return (*v1) < (*v2); });
+        rebuild_selector_index();
+    }
+
+    void css::rebuild_selector_index()
+    {
+        const auto start = std::chrono::steady_clock::now();
+        m_index = {};
+        // Tiny stylesheets are faster on the existing contiguous loop and avoid
+        // paying index allocation/build cost during document startup.
+        m_index.enabled = selector_index_enabled() && m_selectors.size() >= 32;
+        if(m_index.enabled)
+        {
+            for(size_t i = 0; i < m_selectors.size(); ++i)
+            {
+                const auto& right = m_selectors[i]->m_right;
+                const css_attribute_selector* id_key = nullptr;
+                const css_attribute_selector* class_key = nullptr;
+                const css_attribute_selector* attr_key = nullptr;
+                for(const auto& attr : right.m_attrs)
+                {
+                    if(attr.type == select_id && !id_key) id_key = &attr;
+                    else if(attr.type == select_class && !class_key) class_key = &attr;
+                    else if(attr.type == select_attr && !attr_key) attr_key = &attr;
+                }
+                // Every selector has exactly one primary rightmost key. A selector
+                // that can match an element is therefore present in one of the
+                // element's queried buckets; the full matcher remains authoritative.
+                if(id_key) m_index.ids[id_key->name].push_back(i);
+                else if(class_key) m_index.classes[class_key->name].push_back(i);
+                else if(right.m_tag != star_id) m_index.tags[right.m_tag].push_back(i);
+                else if(attr_key) m_index.attributes[_s(attr_key->name)].push_back(i);
+                else m_index.universal.push_back(i);
+            }
+            auto account = [this](const auto& buckets) {
+                for(const auto& pair : buckets)
+                    m_index.bytes += sizeof(pair.first) + sizeof(size_t) * pair.second.capacity();
+            };
+            account(m_index.ids); account(m_index.classes); account(m_index.tags); account(m_index.attributes);
+            m_index.bytes += sizeof(size_t) * m_index.universal.capacity();
+        }
+        m_index.build_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        m_index_diagnostics = {};
+        m_index_diagnostics.build_ns = m_index.build_ns;
+        m_index_diagnostics.bytes = m_index.bytes;
+        m_index_diagnostics.enabled = m_index.enabled;
+    }
+
+    css_selector::vector css::candidate_selectors(string_id tag, string_id id,
+                                                  const std::vector<string_id>& classes,
+                                                  const string_map& attributes) const
+    {
+        ++m_index_diagnostics.query_count;
+        m_index_diagnostics.total_rules_considered += m_selectors.size();
+        if(!m_index.enabled)
+        {
+            m_index_diagnostics.candidate_rules += m_selectors.size();
+            return m_selectors;
+        }
+        std::vector<uint8_t> selected(m_selectors.size(), 0);
+        auto mark = [&selected](const std::vector<size_t>* bucket) {
+            if(bucket) for(size_t index : *bucket) selected[index] = 1;
+        };
+        mark(&m_index.universal);
+        if(const auto it = m_index.ids.find(id); it != m_index.ids.end()) mark(&it->second);
+        for(string_id cls : classes)
+            if(const auto it = m_index.classes.find(cls); it != m_index.classes.end()) mark(&it->second);
+        if(const auto it = m_index.tags.find(tag); it != m_index.tags.end()) mark(&it->second);
+        for(const auto& attr : attributes)
+            if(const auto it = m_index.attributes.find(lowcase(attr.first)); it != m_index.attributes.end()) mark(&it->second);
+
+        css_selector::vector result;
+        for(size_t i = 0; i < selected.size(); ++i)
+            if(selected[i]) result.push_back(m_selectors[i]);
+        m_index_diagnostics.candidate_rules += result.size();
+        return result;
+    }
+
+    void css::set_selector_index_enabled(bool enabled)
+    {
+        g_selector_index_enabled.store(enabled, std::memory_order_relaxed);
+    }
+
+    bool css::selector_index_enabled()
+    {
+        return g_selector_index_enabled.load(std::memory_order_relaxed);
     }
 
 } // namespace litehtml

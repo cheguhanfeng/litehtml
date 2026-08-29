@@ -80,13 +80,36 @@ namespace litehtml
             element_position position;
             string_id      tag;
             size_t         child_count;
+            uint64_t       layout_signature;
         };
+
+        uint64_t layout_signature(const css_properties& css)
+        {
+            uint64_t hash = 1469598103934665603ull;
+            auto add = [&hash](const std::string& value) {
+                for(const unsigned char ch : value) { hash ^= ch; hash *= 1099511628211ull; }
+                hash ^= 0xff; hash *= 1099511628211ull;
+            };
+            add(std::to_string(static_cast<int>(css.get_display())));
+            add(std::to_string(static_cast<int>(css.get_position())));
+            add(std::to_string(static_cast<int>(css.get_float())));
+            add(std::to_string(static_cast<int>(css.get_overflow())));
+            add(css.get_width().to_string()); add(css.get_height().to_string());
+            add(css.get_min_width().to_string()); add(css.get_min_height().to_string());
+            add(css.get_max_width().to_string()); add(css.get_max_height().to_string());
+            add(css.get_margins().to_string()); add(css.get_padding().to_string());
+            add(std::to_string(static_cast<float>(css.get_font_size())));
+            add(css.get_flex_basis().to_string()); add(std::to_string(css.get_flex_grow()));
+            add(std::to_string(css.get_flex_shrink()));
+            add(css.get_grid_template_columns()); add(css.get_grid_template_rows());
+            return hash;
+        }
 
         void collect_style_topology(const element::ptr& root, std::vector<style_topology_entry>& result)
         {
             if(!root) return;
             result.push_back({root.get(), root->css().get_display(), root->css().get_position(), root->tag(),
-                              root->children().size()});
+                              root->children().size(), layout_signature(root->css())});
             for(const auto& child : root->children())
             {
                 collect_style_topology(child, result);
@@ -97,6 +120,16 @@ namespace litehtml
         {
             const auto position = el.css().get_position();
             return position == element_position_absolute || position == element_position_fixed;
+        }
+
+        bool is_safe_layout_containment(const element& el)
+        {
+            const auto& css = el.css();
+            const auto& width = css.get_width();
+            const auto& height = css.get_height();
+            return css.has_layout_containment() && !css.has_unsupported_containment() &&
+                   !width.is_predefined() && !height.is_predefined() &&
+                   width.units() != css_units_percentage && height.units() != css_units_percentage;
         }
     } // namespace
 
@@ -647,20 +680,35 @@ namespace litehtml
             return render(max_width, rt);
         }
 
-        // Only absolute/fixed subtrees are independent of normal-flow sibling
-        // placement. Relative positioning still participates in normal flow.
+        // Absolute/fixed subtrees are independent by construction. A normal-flow
+        // subtree may also stop at a proven fixed-size layout containment box.
         const auto old_display  = root->css().get_display();
         const auto old_position = root->css().get_position();
-        if(!is_out_of_flow_positioned(*root))
+        auto layout_root = root;
+        bool containment_candidate = false;
+        for(auto node = root; node; node = node->parent())
         {
+            if(node->css().has_layout_containment() || node->css().has_unsupported_containment())
+            {
+                containment_candidate = true;
+                if(is_safe_layout_containment(*node)) layout_root = node;
+                break;
+            }
+        }
+        const bool containment_hit = layout_root != root || is_safe_layout_containment(*root);
+        if(!is_out_of_flow_positioned(*root) && !containment_hit)
+        {
+            if(containment_candidate) ++m_style_invalidation_stats.containment_fallback_count;
             return render(max_width, rt);
         }
+        if(containment_hit) ++m_style_invalidation_stats.containment_hit_count;
 
-        const bool topology_changed = rematch_styles(root, m_scoped_selector_match_required);
+        bool layout_changed = true;
+        const bool topology_changed = rematch_styles(root, m_scoped_selector_match_required, &layout_changed);
         m_scoped_selector_match_required = false;
         m_scoped_styles_dirty_root.reset();
-        auto item = root->get_render_item();
-        if(topology_changed || !item || !is_out_of_flow_positioned(*root) || root->css().get_display() != old_display ||
+        auto item = layout_root->get_render_item();
+        if(topology_changed || !item || (!is_out_of_flow_positioned(*root) && !containment_hit) || root->css().get_display() != old_display ||
            root->css().get_position() != old_position)
         {
             // A changed render-item kind or positioning mode requires rebuilding
@@ -668,6 +716,15 @@ namespace litehtml
             m_render_tree_dirty = true;
             return render(max_width, rt);
         }
+        if(!layout_changed)
+        {
+            ++m_style_invalidation_stats.geometry_cache_hit_count;
+            return 0_px;
+        }
+        ++m_style_invalidation_stats.geometry_cache_miss_count;
+        std::vector<style_topology_entry> layout_nodes;
+        collect_style_topology(layout_root, layout_nodes);
+        m_style_invalidation_stats.layout_visited_elements += layout_nodes.size();
 
         position viewport;
         m_container->get_viewport(viewport);
@@ -677,7 +734,8 @@ namespace litehtml
         cb_context.height = viewport.height;
         cb_context.height.type = containing_block_context::cbc_value_type_absolute;
         const auto placement = item->pos();
-        const auto result = item->render(placement.x, placement.y, cb_context, nullptr);
+        const auto result = item->render(placement.x - item->content_offset_left(),
+                                         placement.y - item->content_offset_top(), cb_context, nullptr);
         if(m_root_render->fetch_positioned())
         {
             m_fixed_boxes.clear();
@@ -746,7 +804,8 @@ namespace litehtml
         invalidate_styles();
     }
 
-    void document::invalidate_attribute_styles(const std::shared_ptr<element>& root, const char* attribute)
+    void document::invalidate_attribute_styles(const std::shared_ptr<element>& root, const char* attribute,
+                                                const char* old_value, const char* new_value)
     {
         if(!m_finalized || !attribute || !is_connected(root)) return;
 
@@ -756,13 +815,35 @@ namespace litehtml
         {
             scope = found->second;
         }
-        if(name == _id("class") && static_cast<int>(m_class_dependency) > static_cast<int>(scope))
+        auto merge_scope = [&scope](style_match_scope dependency) {
+            if(static_cast<int>(dependency) > static_cast<int>(scope)) scope = dependency;
+        };
+        if(name == _id("class"))
         {
-            scope = m_class_dependency;
+            auto merge_classes = [&](const char* value) {
+                if(!value) return;
+                std::string normalized = value;
+                if(mode() == quirks_mode) lcase(normalized);
+                for(const auto& token : split_string(normalized, whitespace, "", ""))
+                {
+                    if(const auto found = m_class_dependencies.find(_id(token)); found != m_class_dependencies.end())
+                        merge_scope(found->second);
+                }
+            };
+            merge_classes(old_value);
+            merge_classes(new_value);
         }
-        if(name == _id("id") && static_cast<int>(m_id_dependency) > static_cast<int>(scope))
+        if(name == _id("id"))
         {
-            scope = m_id_dependency;
+            auto merge_id = [&](const char* value) {
+                if(!value || !*value) return;
+                std::string normalized = value;
+                if(mode() == quirks_mode) lcase(normalized);
+                if(const auto found = m_id_dependencies.find(_id(normalized)); found != m_id_dependencies.end())
+                    merge_scope(found->second);
+            };
+            merge_id(old_value);
+            merge_id(new_value);
         }
         if(scope == style_match_scope::full)
         {
@@ -791,8 +872,8 @@ namespace litehtml
     void document::rebuild_selector_dependencies()
     {
         m_attribute_dependencies.clear();
-        m_class_dependency = style_match_scope::none;
-        m_id_dependency = style_match_scope::none;
+        m_class_dependencies.clear();
+        m_id_dependencies.clear();
         m_structure_requires_full_match = false;
 
         auto merge_scope = [](style_match_scope& current, style_match_scope incoming) {
@@ -801,10 +882,10 @@ namespace litehtml
         auto record = [&](const css_attribute_selector& attr, style_match_scope scope) {
             if(attr.type == select_class)
             {
-                merge_scope(m_class_dependency, scope);
+                merge_scope(m_class_dependencies[attr.name], scope);
             } else if(attr.type == select_id)
             {
-                merge_scope(m_id_dependency, scope);
+                merge_scope(m_id_dependencies[attr.name], scope);
             } else if(attr.type == select_attr)
             {
                 merge_scope(m_attribute_dependencies[attr.name], scope);
@@ -858,7 +939,7 @@ namespace litehtml
         scan_stylesheet(m_user_css);
     }
 
-    bool document::rematch_styles(const std::shared_ptr<element>& root, bool match_selectors)
+    bool document::rematch_styles(const std::shared_ptr<element>& root, bool match_selectors, bool* layout_changed)
     {
         if(!root) return false;
         const auto started = std::chrono::steady_clock::now();
@@ -868,6 +949,7 @@ namespace litehtml
 
         if(match_selectors)
         {
+            root->invalidate_selector_cache();
             root->reset_matched_styles();
             root->apply_stylesheet(m_master_css);
             root->parse_attributes();
@@ -884,6 +966,7 @@ namespace litehtml
 
         collect_style_topology(root, after);
         bool topology_changed = before.size() != after.size();
+        bool geometry_changed = topology_changed;
         for(size_t i = 0; !topology_changed && i < before.size(); ++i)
         {
             if(before[i].node != after[i].node || before[i].display != after[i].display ||
@@ -892,7 +975,9 @@ namespace litehtml
             {
                 topology_changed = true;
             }
+            if(before[i].layout_signature != after[i].layout_signature) geometry_changed = true;
         }
+        if(layout_changed) *layout_changed = geometry_changed;
         const auto elapsed = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                         std::chrono::steady_clock::now() - started)
                                                         .count());
@@ -947,6 +1032,45 @@ namespace litehtml
     void document::reset_style_stats()
     {
         m_style_invalidation_stats = {};
+    }
+
+    css::selector_index_diagnostics document::selector_index_stats() const
+    {
+        css::selector_index_diagnostics out;
+        auto merge = [&out](const css::selector_index_diagnostics& value) {
+            out.build_ns += value.build_ns;
+            out.query_count += value.query_count;
+            out.total_rules_considered += value.total_rules_considered;
+            out.candidate_rules += value.candidate_rules;
+            out.bytes += value.bytes;
+            out.enabled = out.enabled || value.enabled;
+        };
+        merge(m_master_css.index_diagnostics());
+        merge(m_styles.index_diagnostics());
+        merge(m_user_css.index_diagnostics());
+        return out;
+    }
+
+    void document::record_selector_cache(bool hit, bool bypass, bool stale, bool evicted, uint64_t validation_ns, size_t entries)
+    {
+        if(hit) ++m_selector_cache_stats.hit_count;
+        else if(bypass) ++m_selector_cache_stats.bypass_count;
+        else ++m_selector_cache_stats.miss_count;
+        if(stale) ++m_selector_cache_stats.stale_count;
+        if(evicted) ++m_selector_cache_stats.evict_count;
+        m_selector_cache_stats.validation_ns += validation_ns;
+        m_selector_cache_stats.peak_entries = std::max<uint64_t>(m_selector_cache_stats.peak_entries, entries);
+    }
+
+    void document::benchmark_refresh_selector_matches()
+    {
+        if(!m_root) return;
+        m_root->reset_matched_styles();
+        m_root->apply_stylesheet(m_master_css);
+        m_root->parse_attributes();
+        m_root->apply_stylesheet(m_styles);
+        m_root->apply_stylesheet(m_user_css);
+        m_root->compute_styles();
     }
 
     void document::prepare_scoped_styles()

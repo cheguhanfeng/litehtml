@@ -97,6 +97,9 @@ namespace litehtml
         std::string          m_grid_template_columns;
         std::string          m_grid_template_rows;
         std::string          m_backdrop_filter;
+        std::string          m_contain;
+        uint8_t              m_containment = 0;
+        bool                 m_containment_unsupported = false;
         int                  m_webkit_line_clamp = 0;
         std::string          m_webkit_box_orient;
 
@@ -250,6 +253,10 @@ namespace litehtml
         const std::string&   get_grid_template_columns() const;
         const std::string&   get_grid_template_rows() const;
         const std::string&   get_backdrop_filter() const;
+        bool                 has_layout_containment() const { return (m_containment & 1) != 0; }
+        bool                 has_paint_containment() const { return (m_containment & 2) != 0; }
+        bool                 has_style_containment() const { return (m_containment & 4) != 0; }
+        bool                 has_unsupported_containment() const { return m_containment_unsupported; }
         int                  get_webkit_line_clamp() const;
         const std::string&   get_webkit_box_orient() const;
 

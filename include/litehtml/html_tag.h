@@ -8,6 +8,7 @@
 #include "style.h"
 #include "stylesheet.h"
 #include "table.h"
+#include <vector>
 
 namespace litehtml
 {
@@ -30,6 +31,19 @@ namespace litehtml
         style                  m_style;
         string_map             m_attrs;
         std::vector<string_id> m_pseudo_classes;
+        struct selector_cache_value
+        {
+            int no_pseudo = select_no_match;
+            int with_pseudo = select_no_match;
+            bool has_no_pseudo = false;
+            bool has_with_pseudo = false;
+        };
+        struct selector_cache_entry
+        {
+            const css_selector* selector = nullptr;
+            selector_cache_value value;
+        };
+        std::vector<selector_cache_entry> m_selector_cache;
 
         void select_all(const css_selector& selector, elements_list& res) override;
 
@@ -61,6 +75,7 @@ namespace litehtml
         void        apply_stylesheet(const litehtml::css& stylesheet) override;
         void        reset_styles() override;
         void        reset_matched_styles() override;
+        void        invalidate_selector_cache() override;
         void        refresh_styles() override;
 
         bool is_white_space() const override;
@@ -121,6 +136,8 @@ namespace litehtml
         const background* get_background(bool own_only = false) override;
 
         std::string dump_get_name() override;
+        static void set_selector_cache_mode(int mode);
+        static int selector_cache_mode();
 
       protected:
         void         draw_list_marker(uint_ptr hdc, const position& pos, const std::shared_ptr<render_item>& ri);
@@ -135,6 +152,7 @@ namespace litehtml
         void map_to_dimension_property_ignoring_zero(string_id prop_name, const std::string& attr_value);
 
       private:
+        int select_cached(const css_selector& selector, bool apply_pseudo);
         void handle_counter_properties();
     };
 

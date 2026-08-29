@@ -95,6 +95,7 @@ namespace litehtml
         // items. Used by scoped style invalidation when render-tree topology is
         // still expected to be reusable.
         virtual void        reset_matched_styles();
+        virtual void        invalidate_selector_cache();
         virtual void        refresh_styles();
         virtual bool        is_white_space() const;
         virtual bool        is_space() const;

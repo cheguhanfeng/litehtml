@@ -289,6 +289,20 @@ void litehtml::css_properties::compute(const html_tag* el, const document::ptr& 
     {
         m_backdrop_filter = el->get_property<std::string>(__webkit_backdrop_filter_, false, "", offset(m_backdrop_filter));
     }
+    m_contain = el->get_property<std::string>(_contain_, false, "", offset(m_contain));
+    m_containment = 0;
+    m_containment_unsupported = false;
+    for(const auto& token : split_string(lowcase(m_contain), whitespace, "", ""))
+    {
+        if(token == "layout") m_containment |= 1;
+        else if(token == "paint") m_containment |= 2;
+        else if(token == "style") m_containment |= 4;
+        else if(token != "none") m_containment_unsupported = true;
+    }
+    if(m_containment_unsupported) m_containment = 0;
+    // Paint containment establishes a clipping boundary. Reuse the existing
+    // overflow clip path so nested clip ordering remains deterministic.
+    if(has_paint_containment()) m_overflow = overflow_hidden;
     m_webkit_line_clamp = el->get_property<int>(__webkit_line_clamp_, false, 0, offset(m_webkit_line_clamp));
     m_webkit_box_orient = el->get_property<std::string>(__webkit_box_orient_, false, "", offset(m_webkit_box_orient));
 

@@ -486,6 +486,10 @@ namespace litehtml
     {
         m_used_styles.clear();
     }
+
+    void element::invalidate_selector_cache()
+    {
+    }
     void        element::refresh_styles() LITEHTML_EMPTY_FUNC;
     void        element::on_click() LITEHTML_EMPTY_FUNC;
     void        element::compute_styles(bool /*recursive*/) LITEHTML_EMPTY_FUNC;

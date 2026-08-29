@@ -263,11 +263,46 @@ typedef struct litehtml_style_invalidation_stats
     uint64_t subtree_match_ns;
     uint64_t full_match_ns;
     uint64_t render_tree_fallback_count;
+    uint64_t containment_hit_count;
+    uint64_t containment_fallback_count;
+    uint64_t geometry_cache_hit_count;
+    uint64_t geometry_cache_miss_count;
+    uint64_t layout_visited_elements;
 } litehtml_style_invalidation_stats;
 
 LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
     const litehtml_layout_service* service, litehtml_style_invalidation_stats* out_stats);
 LITEHTML_API void litehtml_layout_reset_style_invalidation_stats(litehtml_layout_service* service);
+
+typedef struct litehtml_selector_index_stats
+{
+    uint64_t build_ns;
+    uint64_t query_count;
+    uint64_t total_rules_considered;
+    uint64_t candidate_rules;
+    uint64_t index_bytes;
+    int enabled;
+} litehtml_selector_index_stats;
+
+LITEHTML_API void litehtml_layout_set_selector_index_enabled(int enabled);
+LITEHTML_API int litehtml_layout_get_selector_index_stats(
+    const litehtml_layout_service* service, litehtml_selector_index_stats* out_stats);
+
+typedef struct litehtml_selector_cache_stats
+{
+    uint64_t hit_count;
+    uint64_t miss_count;
+    uint64_t bypass_count;
+    uint64_t stale_count;
+    uint64_t evict_count;
+    uint64_t validation_ns;
+    uint64_t peak_entries_per_element;
+} litehtml_selector_cache_stats;
+
+LITEHTML_API void litehtml_layout_set_selector_cache_mode(int mode);
+LITEHTML_API int litehtml_layout_get_selector_cache_stats(
+    const litehtml_layout_service* service, litehtml_selector_cache_stats* out_stats);
+LITEHTML_API int litehtml_layout_benchmark_refresh_selector_matches(litehtml_layout_service* service);
 #endif
 
 /* 布局模式（对应 litehtml render_type，顺序必须与 litehtml 一致） */
