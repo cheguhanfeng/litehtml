@@ -98,6 +98,7 @@ namespace litehtml
             add(css.get_min_width().to_string()); add(css.get_min_height().to_string());
             add(css.get_max_width().to_string()); add(css.get_max_height().to_string());
             add(css.get_margins().to_string()); add(css.get_padding().to_string());
+            add(css.get_offsets().to_string());
             add(std::to_string(static_cast<float>(css.get_font_size())));
             add(css.get_flex_basis().to_string()); add(std::to_string(css.get_flex_grow()));
             add(std::to_string(css.get_flex_shrink()));
