@@ -145,7 +145,7 @@ typedef struct litehtml_background_layer
     float          radius_bottom_left_y;
 } litehtml_background_layer;
 
-/* 线性渐变：stop.offset 为 0-1，start/end 是相对 background layer 的坐标。 */
+/* 线性渐变：stop.offset 为 0-1，start/end 与 background layer 使用同一文档坐标系。 */
 typedef struct litehtml_gradient_stop
 {
     float          offset;
@@ -167,6 +167,16 @@ typedef struct litehtml_radial_gradient
     const litehtml_gradient_stop* stops;
     int stop_count;
 } litehtml_radial_gradient;
+
+/* 锥形渐变：angle 为从正上方开始顺时针旋转的 CSS 角度。 */
+typedef struct litehtml_conic_gradient
+{
+    float center_x, center_y;
+    float angle;
+    float radius;
+    const litehtml_gradient_stop* stops;
+    int stop_count;
+} litehtml_conic_gradient;
 
 /* ------------------------------------------------------------------ */
 /* 宿主回调表（等价 document_container 的纯 C 化）                       */
@@ -197,7 +207,7 @@ typedef struct litehtml_layout_callbacks
     /* 渐变 */
     void (*draw_linear_gradient)(const litehtml_background_layer* layer, const litehtml_linear_gradient* gradient, void* user);
     void (*draw_radial_gradient)(const litehtml_background_layer* layer, const litehtml_radial_gradient* gradient, void* user);
-    void (*draw_conic_gradient)(const litehtml_background_layer* layer, void* user);
+    void (*draw_conic_gradient)(const litehtml_background_layer* layer, const litehtml_conic_gradient* gradient, void* user);
 
     /* 图片 */
     void (*load_image)(const char* src, const char* baseurl, int redraw_on_ready, void* user);

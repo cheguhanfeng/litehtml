@@ -126,6 +126,21 @@ namespace
                 out_stops.empty() ? nullptr : out_stops.data(), static_cast<int>(out_stops.size())};
     }
 
+    inline litehtml_conic_gradient ToCConicGradient(
+        const litehtml::background_layer::conic_gradient& gradient,
+        std::vector<litehtml_gradient_stop>& out_stops)
+    {
+        out_stops.clear();
+        out_stops.reserve(gradient.color_points.size());
+        for(const auto& point : gradient.color_points)
+        {
+            out_stops.push_back({point.offset, ToCColor(point.color)});
+        }
+        return {static_cast<float>(gradient.position.x), static_cast<float>(gradient.position.y), gradient.angle,
+                gradient.radius, out_stops.empty() ? nullptr : out_stops.data(),
+                static_cast<int>(out_stops.size())};
+    }
+
     inline litehtml_size ToCSize(const litehtml::size& s)
     {
         litehtml_size out;
@@ -369,7 +384,9 @@ namespace litehtml
             if(m_cb && m_cb->draw_conic_gradient)
             {
                 litehtml_background_layer cl = ToCLayer(layer);
-                m_cb->draw_conic_gradient(&cl, user());
+                std::vector<litehtml_gradient_stop> stops;
+                litehtml_conic_gradient cg = ToCConicGradient(gradient, stops);
+                m_cb->draw_conic_gradient(&cl, &cg, user());
             }
         }
 

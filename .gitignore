@@ -8,6 +8,7 @@
 
 # Build results
 cmake-build-*/
+build-*/
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
