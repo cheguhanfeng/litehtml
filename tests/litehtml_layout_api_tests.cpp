@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -16,6 +17,7 @@ namespace
         int                      anchor_clicks    = 0;
         int                      anchor_clicks_ex = 0;
         int                      mouse_events     = 0;
+        int                      css_imports      = 0;
         std::string              anchor_target;
     };
 
@@ -516,6 +518,16 @@ namespace
         return passed;
     }
 
+    void import_css(char* text, const char* url, char* baseurl, void* user)
+    {
+        auto* state = static_cast<callback_state*>(user);
+        ++state->css_imports;
+        const std::string css = url && std::string(url) == "two.css" ? "#box{height:120px}" : "#box{height:20px}";
+        std::copy(css.begin(), css.end(), text);
+        text[css.size()] = '\0';
+        if(baseurl) baseurl[0] = '\0';
+    }
+
     bool test_programmatic_html_tag_names_are_case_insensitive()
     {
         callback_state            state;
@@ -580,6 +592,144 @@ namespace
         litehtml_layout_destroy(service);
         return passed;
     }
+
+    bool test_style_media_attribute_controls_author_rules()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service,
+                                 "<!doctype html><html><head><style>#box{height:20px}</style>"
+                                 "<style media='(min-width: 1000px)'>#box{height:200px}</style></head>"
+                                 "<body><div id='box'></div></body></html>",
+                                 nullptr, 800, 600) != 0,
+                               "style-media document failed to load") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "style-media document failed to render");
+        auto* box = litehtml_layout_get_element_by_id(service, "box");
+        litehtml_rect placement{};
+        passed = expect(box != nullptr && litehtml_layout_element_get_placement(box, &placement) != 0,
+                        "style-media box placement was unavailable") &&
+                 expect(std::fabs(placement.height - 20.f) < 0.01f,
+                        "inactive style media attribute was ignored") &&
+                 passed;
+        passed = expect(litehtml_layout_set_viewport(service, 1200, 600) != 0,
+                        "style-media viewport update failed") &&
+                 expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                        "style-media document failed to re-render") &&
+                 expect(litehtml_layout_element_get_placement(box, &placement) != 0,
+                        "style-media box placement was unavailable after resize") &&
+                 expect(std::fabs(placement.height - 200.f) < 0.01f,
+                        "active style media attribute did not enable its rule") &&
+                 passed;
+        litehtml_layout_element_destroy(box);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_dynamic_style_text_rebuilds_author_stylesheet()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service,
+                                 "<!doctype html><html><head><style id='rules'>#box{height:20px}</style></head>"
+                                 "<body><div id='box'></div></body></html>",
+                                 nullptr, 800, 600) != 0,
+                               "dynamic-style document failed to load") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "dynamic-style document failed to render");
+        auto* style = litehtml_layout_get_element_by_id(service, "rules");
+        auto* box   = litehtml_layout_get_element_by_id(service, "box");
+        litehtml_rect placement{};
+        passed = expect(style != nullptr && box != nullptr, "dynamic-style elements were not found") &&
+                 expect(litehtml_layout_element_get_placement(box, &placement) != 0,
+                        "dynamic-style box placement was unavailable") &&
+                 expect(std::fabs(placement.height - 20.f) < 0.01f,
+                        "initial dynamic-style rule was not applied") &&
+                 expect(litehtml_layout_element_set_inner_html(style, "#box{height:120px}") != 0,
+                        "dynamic style text replacement failed") &&
+                 expect(std::string(litehtml_layout_element_get_text(style)) == "#box{height:120px}",
+                        "dynamic style text replacement retained old content") &&
+                 expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                        "dynamic-style document failed to re-render") &&
+                 expect(litehtml_layout_element_get_placement(box, &placement) != 0,
+                        "dynamic-style box placement was unavailable after mutation") &&
+                 expect(std::fabs(placement.height - 120.f) < 0.01f,
+                        "dynamic style text did not rebuild the author stylesheet") &&
+                 passed;
+        litehtml_layout_element_destroy(box);
+        litehtml_layout_element_destroy(style);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_dynamic_stylesheet_link_reloads_author_rules()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user       = &state;
+        callbacks.import_css = import_css;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service,
+                                 "<!doctype html><html><head><link id='rules' rel='StyleSheet' href='one.css'></head>"
+                                 "<body><div id='box'></div></body></html>",
+                                 nullptr, 800, 600) != 0,
+                               "dynamic-link document failed to load") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "dynamic-link document failed to render");
+        auto* link = litehtml_layout_get_element_by_id(service, "rules");
+        auto* box  = litehtml_layout_get_element_by_id(service, "box");
+        litehtml_rect placement{};
+        passed = expect(link != nullptr && box != nullptr, "dynamic-link elements were not found") &&
+                 expect(litehtml_layout_element_get_placement(box, &placement) != 0,
+                        "dynamic-link box placement was unavailable") &&
+                 expect(std::fabs(placement.height - 20.f) < 0.01f,
+                        "initial linked stylesheet rule was not applied") &&
+                 expect(litehtml_layout_element_set_attribute(link, "href", "two.css") != 0,
+                        "stylesheet link href mutation failed") &&
+                 expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                        "dynamic-link document failed to re-render") &&
+                 expect(litehtml_layout_element_get_placement(box, &placement) != 0,
+                        "dynamic-link box placement was unavailable after mutation") &&
+                 expect(std::fabs(placement.height - 120.f) < 0.01f,
+                        "mutated stylesheet link did not replace its author rules") &&
+                 expect(state.css_imports == 2, "stylesheet link was not imported exactly once per href") &&
+                 passed;
+        litehtml_layout_element_destroy(box);
+        litehtml_layout_element_destroy(link);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_viewport_dimensions_must_be_finite_positive()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service, "<!doctype html><html><body></body></html>", nullptr, 0, 600) == 0,
+                               "load_html accepted a zero-width viewport") &&
+                      expect(litehtml_layout_load_html(
+                                 service, "<!doctype html><html><body></body></html>", nullptr, 800, 600) != 0,
+                             "valid viewport document failed to load") &&
+                      expect(litehtml_layout_set_viewport(service, std::numeric_limits<float>::infinity(), 600) == 0,
+                             "set_viewport accepted an infinite width") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "invalid viewport update corrupted the previous valid document");
+        litehtml_layout_destroy(service);
+        return passed;
+    }
 } // namespace
 
 int main()
@@ -596,7 +746,10 @@ int main()
                    test_scroll_input_prefers_nested_overflow_then_page() &&
                    test_script_inner_html_replaces_source_text() && test_script_src_uses_html_attribute_semantics() &&
                    test_programmatic_html_tag_names_are_case_insensitive() &&
-                   test_scroll_to_aligns_element_top_exactly()
+                   test_scroll_to_aligns_element_top_exactly() && test_style_media_attribute_controls_author_rules() &&
+                   test_dynamic_style_text_rebuilds_author_stylesheet() &&
+                   test_dynamic_stylesheet_link_reloads_author_rules() &&
+                   test_viewport_dimensions_must_be_finite_positive()
                ? EXIT_SUCCESS
                : EXIT_FAILURE;
 }

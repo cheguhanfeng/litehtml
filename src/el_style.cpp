@@ -2,29 +2,17 @@
 #include "document.h"
 
 litehtml::el_style::el_style(const std::shared_ptr<document>& doc) :
-    element(doc)
+    html_tag(doc)
 {
 }
 
 void litehtml::el_style::parse_attributes()
 {
+    if(get_document()->stylesheet_collection_suppressed()) return;
     std::string text;
 
-    for(auto& el : m_children)
-    {
-        el->get_text(text);
-    }
+    get_text(text);
     get_document()->add_stylesheet(text.c_str(), nullptr, get_attr("media"));
-}
-
-bool litehtml::el_style::appendChild(const ptr& el)
-{
-    if(el && el->is_text())
-    {
-        m_children.push_back(el);
-        return true;
-    }
-    return false;
 }
 
 void litehtml::el_style::compute_styles(bool /* recursive */)

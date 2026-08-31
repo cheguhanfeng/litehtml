@@ -108,6 +108,8 @@ namespace litehtml
         bool                                    m_finalized = false;
         bool                                    m_styles_dirty      = false;
         bool                                    m_render_tree_dirty = false;
+        bool                                    m_author_stylesheets_dirty = false;
+        bool                                    m_suppress_stylesheet_collection = false;
 
         enum class style_match_scope : uint8_t
         {
@@ -158,6 +160,7 @@ namespace litehtml
         pixel_t                      content_width() const;
         pixel_t                      content_height() const;
         void                         add_stylesheet(const char* str, const char* baseurl, const char* media);
+        bool stylesheet_collection_suppressed() const { return m_suppress_stylesheet_collection; }
         bool                         on_mouse_over(pixel_t x, pixel_t y, pixel_t client_x, pixel_t client_y,
                                                    const std::function<void(const position&)>& redraw_box);
         std::vector<scroll_values>   on_scroll(pixel_t dx, pixel_t dy, pixel_t x, pixel_t y, pixel_t client_x,
@@ -180,6 +183,8 @@ namespace litehtml
         void                         add_tabular(const std::shared_ptr<render_item>& el);
         // Schedules a full stylesheet match and render-tree refresh.
         void                         invalidate_styles();
+        // Rebuilds inline and linked author stylesheets once at the next render.
+        void                         invalidate_author_stylesheets();
         // Compatibility overload for inline-style mutations.
         void                         invalidate_styles(const std::shared_ptr<element>& root);
         // Queue an attribute mutation using the cached selector dependency
@@ -238,6 +243,7 @@ namespace litehtml
         bool         update_media_lists(const media_features& features);
         void         fix_tables_layout();
         void         rebuild_selector_dependencies();
+        void         rebuild_author_stylesheets();
         void         rebuild_all_styles();
         void         prepare_scoped_styles();
         bool         rematch_styles(const std::shared_ptr<element>& root, bool match_selectors,

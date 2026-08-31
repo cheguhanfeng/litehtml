@@ -782,7 +782,8 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
                                            float viewport_width,
                                            float viewport_height)
 {
-    if(!service || !html)
+    if(!service || !html || !std::isfinite(viewport_width) || !std::isfinite(viewport_height) ||
+       viewport_width <= 0.f || viewport_height <= 0.f)
     {
         return 0;
     }
@@ -816,7 +817,11 @@ LITEHTML_API int litehtml_layout_set_viewport(litehtml_layout_service* service,
                                               float viewport_width,
                                               float viewport_height)
 {
-    if(!service || viewport_width <= 0.f || viewport_height <= 0.f) return 0;
+    if(!service || !std::isfinite(viewport_width) || !std::isfinite(viewport_height) || viewport_width <= 0.f ||
+       viewport_height <= 0.f)
+    {
+        return 0;
+    }
     service->viewport_w = viewport_width;
     service->viewport_h = viewport_height;
     service->container.set_fallback_viewport(viewport_width, viewport_height);

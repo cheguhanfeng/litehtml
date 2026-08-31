@@ -1,6 +1,7 @@
 #include "el_link.h"
 #include "document.h"
 #include "document_container.h"
+#include "html.h"
 #include <cstring>
 
 litehtml::el_link::el_link(const std::shared_ptr<document>& doc) :
@@ -10,12 +11,20 @@ litehtml::el_link::el_link(const std::shared_ptr<document>& doc) :
 
 void litehtml::el_link::parse_attributes()
 {
+    if(get_document()->stylesheet_collection_suppressed()) return;
     bool processed = false;
 
     document::ptr doc = get_document();
 
     const char* rel = get_attr("rel");
-    if(rel && !strcmp(rel, "stylesheet"))
+    bool is_stylesheet = false;
+    bool is_alternate  = false;
+    for(const auto& token : split_string(lowcase(rel ? rel : ""), whitespace, "", ""))
+    {
+        is_stylesheet = is_stylesheet || token == "stylesheet";
+        is_alternate  = is_alternate || token == "alternate";
+    }
+    if(is_stylesheet && !is_alternate)
     {
         const char* media = get_attr("media");
         const char* href  = get_attr("href");

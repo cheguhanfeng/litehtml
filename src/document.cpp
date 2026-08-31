@@ -132,6 +132,17 @@ namespace litehtml
                    !width.is_predefined() && !height.is_predefined() &&
                    width.units() != css_units_percentage && height.units() != css_units_percentage;
         }
+
+        bool contains_author_stylesheet(const element::ptr& root)
+        {
+            if(!root) return false;
+            if(root->tag() == _style_ || root->tag() == _link_) return true;
+            for(const auto& child : root->children())
+            {
+                if(contains_author_stylesheet(child)) return true;
+            }
+            return false;
+        }
     } // namespace
 
     document::document(document_container* container)
@@ -767,6 +778,13 @@ namespace litehtml
         }
     }
 
+    void document::invalidate_author_stylesheets()
+    {
+        if(!m_finalized) return;
+        m_author_stylesheets_dirty = true;
+        invalidate_styles();
+    }
+
     void document::invalidate_styles(const std::shared_ptr<element>& root)
     {
         invalidate_attribute_styles(root, "style");
@@ -817,6 +835,12 @@ namespace litehtml
         if(!m_finalized || !attribute || !is_connected(root)) return;
 
         const auto name = _id(lowcase(attribute));
+        if((root->tag() == _style_ && name == _id("media")) ||
+           (root->tag() == _link_ && (name == _id("href") || name == _id("media") || name == _id("rel"))))
+        {
+            invalidate_author_stylesheets();
+            return;
+        }
         auto scope = style_match_scope::none;
         if(const auto found = m_attribute_dependencies.find(name); found != m_attribute_dependencies.end())
         {
@@ -959,7 +983,9 @@ namespace litehtml
             root->invalidate_selector_cache();
             root->reset_matched_styles();
             root->apply_stylesheet(m_master_css);
+            m_suppress_stylesheet_collection = true;
             root->parse_attributes();
+            m_suppress_stylesheet_collection = false;
             root->apply_stylesheet(m_styles);
             root->apply_stylesheet(m_user_css);
         } else
@@ -1003,6 +1029,40 @@ namespace litehtml
         return topology_changed;
     }
 
+    void document::rebuild_author_stylesheets()
+    {
+        m_author_stylesheets_dirty = false;
+        m_css.clear();
+
+        std::function<void(const element::ptr&)> collect = [&](const element::ptr& node) {
+            if(!node) return;
+            if(node->tag() == _style_ || node->tag() == _link_)
+            {
+                node->parse_attributes();
+                return;
+            }
+            for(const auto& child : node->children()) collect(child);
+        };
+        collect(m_root);
+
+        css rebuilt;
+        for(const auto& sheet : m_css)
+        {
+            media_query_list_list::ptr media;
+            if(sheet.media != "")
+            {
+                auto mq_list = parse_media_query_list(sheet.media, shared_from_this());
+                media        = std::make_shared<media_query_list_list>();
+                media->add(mq_list);
+            }
+            rebuilt.parse_css_stylesheet(sheet.text, sheet.baseurl, shared_from_this(), media);
+        }
+        rebuilt.sort_selectors();
+        m_styles = std::move(rebuilt);
+        rebuild_selector_dependencies();
+        update_media_lists(m_media);
+    }
+
     void document::rebuild_all_styles()
     {
         m_styles_dirty = false;
@@ -1018,7 +1078,9 @@ namespace litehtml
         // mutation and cannot activate a newly matching sibling/class rule.
         m_root->reset_styles();
         m_root->apply_stylesheet(m_master_css);
+        m_suppress_stylesheet_collection = true;
         m_root->parse_attributes();
+        m_suppress_stylesheet_collection = false;
         m_root->apply_stylesheet(m_styles);
         m_root->apply_stylesheet(m_user_css);
         m_root->compute_styles();
@@ -1074,7 +1136,9 @@ namespace litehtml
         if(!m_root) return;
         m_root->reset_matched_styles();
         m_root->apply_stylesheet(m_master_css);
+        m_suppress_stylesheet_collection = true;
         m_root->parse_attributes();
+        m_suppress_stylesheet_collection = false;
         m_root->apply_stylesheet(m_styles);
         m_root->apply_stylesheet(m_user_css);
         m_root->compute_styles();
@@ -1082,6 +1146,7 @@ namespace litehtml
 
     void document::prepare_scoped_styles()
     {
+        if(m_author_stylesheets_dirty) rebuild_author_stylesheets();
         if(m_styles_dirty)
         {
             rebuild_all_styles();
@@ -1206,7 +1271,7 @@ namespace litehtml
 
     void document::add_stylesheet(const char* str, const char* baseurl, const char* media)
     {
-        if(str && str[0])
+        if(!m_suppress_stylesheet_collection && str && str[0])
         {
             m_css.emplace_back(str, baseurl, media);
         }
@@ -1730,8 +1795,15 @@ namespace litehtml
             return false;
         }
 
+        const bool stylesheet_changed = contains_author_stylesheet(parent);
         append_children_from_string(*parent, str, true);
-        invalidate_structure_styles(parent);
+        if(is_connected(parent) && (stylesheet_changed || contains_author_stylesheet(parent)))
+        {
+            invalidate_author_stylesheets();
+        } else
+        {
+            invalidate_structure_styles(parent);
+        }
         return true;
     }
 
@@ -1766,23 +1838,30 @@ namespace litehtml
             return false;
         }
 
-        if(old_parent && old_parent != parent)
+        const bool stylesheet_changed = contains_author_stylesheet(child) &&
+                                        (is_connected(parent) || (old_parent && is_connected(old_parent)));
+        if(stylesheet_changed)
+        {
+            invalidate_author_stylesheets();
+        } else if(old_parent && old_parent != parent)
         {
             invalidate_structure_styles(old_parent);
         }
-        invalidate_structure_styles(parent);
+        if(!stylesheet_changed) invalidate_structure_styles(parent);
         return true;
     }
 
     bool document::remove_child(const element::ptr& parent, const element::ptr& child)
     {
+        const bool stylesheet_changed = is_connected(parent) && contains_author_stylesheet(child);
         if(!parent || !child || parent->get_document().get() != this || child->get_document().get() != this ||
            child->parent() != parent || !parent->removeChild(child))
         {
             return false;
         }
 
-        invalidate_structure_styles(parent);
+        if(stylesheet_changed) invalidate_author_stylesheets();
+        else invalidate_structure_styles(parent);
         return true;
     }
 
@@ -1815,6 +1894,8 @@ namespace litehtml
         {
             return false;
         }
+        const bool stylesheet_changed = is_connected(parent) &&
+                                        (contains_author_stylesheet(child) || contains_author_stylesheet(replacement));
         const auto old_parent = replacement->parent();
         if(old_parent && !old_parent->removeChild(replacement))
         {
@@ -1830,11 +1911,14 @@ namespace litehtml
         replacement->parent(parent);
         *found = replacement;
 
-        if(old_parent && old_parent != parent)
+        if(stylesheet_changed)
+        {
+            invalidate_author_stylesheets();
+        } else if(old_parent && old_parent != parent)
         {
             invalidate_structure_styles(old_parent);
         }
-        invalidate_structure_styles(parent);
+        if(!stylesheet_changed) invalidate_structure_styles(parent);
         return true;
     }
 
