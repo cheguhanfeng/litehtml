@@ -1133,7 +1133,7 @@ LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service,
 {
     if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
-    return service->doc->on_mouse_over(point.x, point.y, point.x, point.y, IgnoreRedrawBox)
+    return service->doc->on_mouse_over(point.x, point.y, x, y, IgnoreRedrawBox)
                ? 1
                : 0;
 }
@@ -1142,7 +1142,7 @@ LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service,
 {
     if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
-    return service->doc->on_lbutton_down(point.x, point.y, point.x, point.y, IgnoreRedrawBox)
+    return service->doc->on_lbutton_down(point.x, point.y, x, y, IgnoreRedrawBox)
                ? 1
                : 0;
 }
@@ -1156,7 +1156,7 @@ LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service
 {
     if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
-    return service->doc->on_lbutton_up(point.x, point.y, point.x, point.y, IgnoreRedrawBox, activate_default != 0)
+    return service->doc->on_lbutton_up(point.x, point.y, x, y, IgnoreRedrawBox, activate_default != 0)
                ? 1
                : 0;
 }
@@ -1167,10 +1167,16 @@ LITEHTML_API int litehtml_layout_on_mouse_cancel(litehtml_layout_service* servic
     return service->doc->on_button_cancel(IgnoreRedrawBox) ? 1 : 0;
 }
 
+LITEHTML_API int litehtml_layout_on_mouse_leave(litehtml_layout_service* service)
+{
+    if(!service || !service->doc || !service->has_rendered) return 0;
+    return service->doc->on_mouse_leave(IgnoreRedrawBox) ? 1 : 0;
+}
+
 LITEHTML_API litehtml_layout_element* litehtml_layout_hit_test(litehtml_layout_service* service, float x, float y)
 {
     if(!service || !service->doc || !service->has_rendered || !service->doc->root_render()) return nullptr;
     const auto point = DocumentPoint(service, x, y);
     return MakeElementHandle(service, service->doc->root_render()->get_element_by_point(
-                                          point.x, point.y, point.x, point.y, nullptr));
+                                          point.x, point.y, x, y, nullptr));
 }

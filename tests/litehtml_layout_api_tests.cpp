@@ -15,6 +15,7 @@ namespace
         std::vector<std::string> base_urls;
         int                      anchor_clicks    = 0;
         int                      anchor_clicks_ex = 0;
+        int                      mouse_events     = 0;
         std::string              anchor_target;
     };
 
@@ -33,6 +34,11 @@ namespace
         auto* state = static_cast<callback_state*>(user);
         ++state->anchor_clicks_ex;
         state->anchor_target = target ? target : "";
+    }
+
+    void on_mouse_event(int, void* user)
+    {
+        ++static_cast<callback_state*>(user)->mouse_events;
     }
 
     bool expect(bool condition, const char* message)
@@ -326,6 +332,90 @@ namespace
                  expect(legacy_state.anchor_clicks == 1, "legacy anchor callback fallback was not emitted") && passed;
         return passed;
     }
+
+    bool test_fixed_hit_testing_uses_unscrolled_client_coordinates()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service,
+                                 "<!doctype html><html><body style='height:2000px'><div id='fixed' "
+                                   "style='position:fixed;left:0;top:0;width:100px;height:100px'></div></body></html>",
+                                 nullptr, 800, 600) != 0,
+                               "fixed hit-test document failed to load") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "fixed hit-test document failed to render");
+        litehtml_layout_set_scroll(service, 0, 500);
+        auto* hit = litehtml_layout_hit_test(service, 20, 20);
+        passed    = expect(hit != nullptr, "fixed element was not hit after page scroll") &&
+                 expect(hit && litehtml_layout_element_get_attribute(hit, "id") &&
+                            std::string(litehtml_layout_element_get_attribute(hit, "id")) == "fixed",
+                        "page scroll offset was incorrectly applied to fixed hit testing") &&
+                 passed;
+        litehtml_layout_element_destroy(hit);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_mouse_up_coordinates_control_click_activation()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user               = &state;
+        callbacks.on_anchor_click_ex = on_anchor_click_ex;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed =
+            expect(litehtml_layout_load_html(service,
+                                             "<!doctype html><html><body><a href='next' "
+                                             "style='display:block;width:100px;height:100px'></a></body></html>",
+                                             nullptr, 800, 600) != 0,
+                   "release-coordinate document failed to load") &&
+            expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                   "release-coordinate document failed to render");
+        litehtml_layout_on_mouse_move(service, 20, 20);
+        litehtml_layout_on_mouse_down(service, 20, 20);
+        litehtml_layout_on_mouse_up(service, 300, 300);
+        passed =
+            expect(state.anchor_clicks_ex == 0, "releasing outside the pressed anchor still activated navigation") &&
+            passed;
+
+        litehtml_layout_on_mouse_move(service, 20, 20);
+        litehtml_layout_on_mouse_down(service, 20, 20);
+        litehtml_layout_on_mouse_up(service, 20, 20);
+        passed = expect(state.anchor_clicks_ex == 1, "releasing over the pressed anchor did not activate navigation") &&
+                 passed;
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_mouse_leave_clears_hover_state()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user           = &state;
+        callbacks.on_mouse_event = on_mouse_event;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service,
+                                 "<!doctype html><html><head><style>#box:hover{color:red}</style></head>"
+                                   "<body><div id='box' style='width:100px;height:100px'></div></body></html>",
+                                 nullptr, 800, 600) != 0,
+                               "mouse-leave document failed to load") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "mouse-leave document failed to render");
+        litehtml_layout_on_mouse_move(service, 20, 20);
+        const int events_after_enter = state.mouse_events;
+        litehtml_layout_on_mouse_leave(service);
+        passed = expect(events_after_enter > 0, "mouse enter state was not established") &&
+                 expect(state.mouse_events > events_after_enter, "mouse leave did not clear hover state") && passed;
+        litehtml_layout_destroy(service);
+        return passed;
+    }
 } // namespace
 
 int main()
@@ -336,7 +426,9 @@ int main()
                    test_node_ids_survive_allocator_address_reuse() &&
                    test_render_lifecycle_and_render_type_validation() &&
                    test_viewport_can_change_without_reloading_dom() &&
-                   test_extended_anchor_callback_supersedes_legacy_callback()
+                   test_extended_anchor_callback_supersedes_legacy_callback() &&
+                   test_fixed_hit_testing_uses_unscrolled_client_coordinates() &&
+                   test_mouse_up_coordinates_control_click_activation() && test_mouse_leave_clears_hover_state()
                ? EXIT_SUCCESS
                : EXIT_FAILURE;
 }

@@ -404,13 +404,16 @@ LITEHTML_API int litehtml_layout_element_replace_child(litehtml_layout_element* 
 LITEHTML_API int litehtml_layout_get_elements_by_tag_count(litehtml_layout_service* service, const char* tag);
 LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_tag(litehtml_layout_service* service, const char* tag, int index);
 
-/* Logic-thread-only interaction entry points. Coordinates are document CSS pixels.
-   They update litehtml's :hover/:active state and return non-zero when a repaint is needed. */
+/* Logic-thread-only interaction entry points. Coordinates are viewport CSS pixels.
+   The service applies page scroll to normal-flow hit testing while preserving
+   unscrolled client coordinates for position:fixed elements. */
 LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service, float x, float y);
 LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service, float x, float y);
 LITEHTML_API int litehtml_layout_on_mouse_up(litehtml_layout_service* service, float x, float y);
 /* Same release transition but conditionally suppresses element click/default actions. */
 LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service, float x, float y, int activate_default);
+/* Clears :hover when the pointer exits the host viewport without cancelling an active press. */
+LITEHTML_API int litehtml_layout_on_mouse_leave(litehtml_layout_service* service);
 LITEHTML_API int litehtml_layout_on_mouse_cancel(litehtml_layout_service* service);
 /* The returned caller-owned handle is valid only while its service is alive. */
 LITEHTML_API litehtml_layout_element* litehtml_layout_hit_test(litehtml_layout_service* service, float x, float y);

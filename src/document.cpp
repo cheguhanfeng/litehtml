@@ -1387,7 +1387,7 @@ namespace litehtml
         return false;
     }
 
-    bool document::on_lbutton_up(pixel_t /*x*/, pixel_t /*y*/, pixel_t /*client_x*/, pixel_t /*client_y*/,
+    bool document::on_lbutton_up(pixel_t x, pixel_t y, pixel_t client_x, pixel_t client_y,
                                  const std::function<void(const position&)>& redraw_box, bool activate_default)
     {
         if(!m_root || !m_root_render)
@@ -1401,7 +1401,8 @@ namespace litehtml
         // release/cancel. Only a release over that same element activates its
         // native default action.
         const auto active_element = m_active_element;
-        const bool is_click = activate_default && active_element && active_element == m_over_element;
+        const auto release_element = m_root_render->get_element_by_point(x, y, client_x, client_y, nullptr);
+        const bool is_click = activate_default && active_element && active_element == release_element;
         m_active_element = nullptr;
         if(active_element && active_element->on_lbutton_up(is_click))
         {
