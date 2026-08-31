@@ -360,6 +360,13 @@ LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* serv
 LITEHTML_API void litehtml_layout_set_scroll(litehtml_layout_service* service, float x, float y);
 /* 按增量滚动（滚轮等），自动 clamp。 */
 LITEHTML_API void litehtml_layout_scroll_by(litehtml_layout_service* service, float dx, float dy);
+/* 路由滚轮/触控板输入：优先滚动命中位置的 overflow 容器，否则滚动页面。
+   x/y 是视口 CSS 像素；发生任一滚动时返回非 0。 */
+LITEHTML_API int litehtml_layout_on_scroll(litehtml_layout_service* service,
+                                           float dx,
+                                           float dy,
+                                           float x,
+                                           float y);
 /* 滚动到指定元素（元素顶部对齐视口顶部）。 */
 LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, litehtml_layout_element* element);
 /* 查询当前滚动偏移。 */

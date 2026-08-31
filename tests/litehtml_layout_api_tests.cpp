@@ -416,6 +416,105 @@ namespace
         litehtml_layout_destroy(service);
         return passed;
     }
+
+    bool test_scroll_input_prefers_nested_overflow_then_page()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(service,
+                                                         "<!doctype html><html><body style='height:2000px'>"
+                                                           "<div style='width:100px;height:100px;overflow:auto'>"
+                                                           "<div style='height:1000px'></div></div></body></html>",
+                                                         nullptr, 800, 600) != 0,
+                               "nested-scroll document failed to load") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "nested-scroll document failed to render");
+        passed =
+            expect(litehtml_layout_on_scroll(service, 0, 100, 20, 20) != 0,
+                   "nested overflow did not consume scroll input") &&
+            expect(litehtml_layout_get_scroll_y(service) == 0, "nested overflow input incorrectly scrolled the page") &&
+            expect(litehtml_layout_on_scroll(service, 0, 1000, 20, 20) != 0,
+                   "partial nested scroll was not consumed") &&
+            expect(litehtml_layout_get_scroll_y(service) > 0,
+                   "nested overflow did not chain its unconsumed delta to the page") &&
+            passed;
+        litehtml_layout_set_scroll(service, 0, 0);
+        passed =
+            expect(litehtml_layout_on_scroll(service, 0, 100, 300, 300) != 0,
+                   "unconsumed scroll input did not fall back to the page") &&
+            expect(litehtml_layout_get_scroll_y(service) > 0, "page scroll offset did not change after fallback") &&
+            passed;
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_script_inner_html_replaces_source_text()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed =
+            expect(litehtml_layout_load_html(service, "<!doctype html><html><body><script>one</script></body></html>",
+                                             nullptr, 800, 600) != 0,
+                   "script replacement document failed to load") &&
+            expect(litehtml_layout_get_script_count(service) == 1, "inline script was not collected") &&
+            expect(std::string(litehtml_layout_get_script(service, 0)) == "one",
+                   "initial inline script source was wrong");
+        auto* script = litehtml_layout_get_element_by_tag(service, "script", 0);
+        passed       = expect(script != nullptr, "script element handle was not found") &&
+                 expect(litehtml_layout_element_set_inner_html(script, "two") != 0,
+                        "script inner HTML replacement failed") &&
+                 expect(std::string(litehtml_layout_get_script(service, 0)) == "two",
+                        "script replacement appended to old source text") &&
+                 passed;
+        litehtml_layout_element_destroy(script);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_script_src_uses_html_attribute_semantics()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service, "<!doctype html><html><body><script src='one.js'></script></body></html>",
+                                 nullptr, 800, 600) != 0,
+                               "script-src document failed to load");
+        auto* script  = litehtml_layout_get_element_by_tag(service, "script", 0);
+        passed =
+            expect(script != nullptr, "script-src element was not found") &&
+            expect(std::string(litehtml_layout_element_get_attribute(script, "SRC")) == "one.js",
+                   "script src was not readable through the DOM attribute API") &&
+            expect(litehtml_layout_element_set_attribute(script, "SRC", "two.js") != 0,
+                   "uppercase script SRC mutation failed") &&
+            expect(std::string(litehtml_layout_get_script_src(service, 0)) == "two.js",
+                   "uppercase script SRC mutation did not update script source") &&
+            expect(std::string(litehtml_layout_element_get_attribute(script, "src")) == "two.js",
+                   "mutated script src was not readable") &&
+            expect(litehtml_layout_element_remove_attribute(script, "SRC") != 0, "script SRC removal failed") &&
+            expect(litehtml_layout_get_script_src(service, 0) == nullptr, "removed script src remained active") &&
+            expect(litehtml_layout_element_get_attribute(script, "src") == nullptr,
+                   "removed script src remained readable") &&
+            expect(litehtml_layout_element_set_attribute(script, "src", "") != 0, "empty script src mutation failed") &&
+            expect(litehtml_layout_element_get_attribute(script, "src") != nullptr,
+                   "present empty script src was treated as absent") &&
+            expect(std::string(litehtml_layout_element_get_attribute(script, "src")).empty(),
+                   "present empty script src did not retain its value") &&
+            expect(litehtml_layout_element_remove_attribute(script, "src") != 0,
+                   "present empty script src could not be removed") &&
+            passed;
+        litehtml_layout_element_destroy(script);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
 } // namespace
 
 int main()
@@ -428,7 +527,9 @@ int main()
                    test_viewport_can_change_without_reloading_dom() &&
                    test_extended_anchor_callback_supersedes_legacy_callback() &&
                    test_fixed_hit_testing_uses_unscrolled_client_coordinates() &&
-                   test_mouse_up_coordinates_control_click_activation() && test_mouse_leave_clears_hover_state()
+                   test_mouse_up_coordinates_control_click_activation() && test_mouse_leave_clears_hover_state() &&
+                   test_scroll_input_prefers_nested_overflow_then_page() &&
+                   test_script_inner_html_replaces_source_text() && test_script_src_uses_html_attribute_semantics()
                ? EXIT_SUCCESS
                : EXIT_FAILURE;
 }

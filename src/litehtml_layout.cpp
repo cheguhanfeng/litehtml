@@ -628,6 +628,7 @@ struct litehtml_layout_element
 namespace
 {
     void ClampScroll(litehtml_layout_service* service);
+    litehtml::position DocumentPoint(const litehtml_layout_service* service, float x, float y);
 
     bool IsValidRenderType(int render_type)
     {
@@ -908,6 +909,29 @@ LITEHTML_API void litehtml_layout_scroll_by(litehtml_layout_service* service, fl
     ClampScroll(service);
 }
 
+LITEHTML_API int litehtml_layout_on_scroll(litehtml_layout_service* service,
+                                           float dx,
+                                           float dy,
+                                           float x,
+                                           float y)
+{
+    if(!service || !service->doc || !service->has_rendered || (dx == 0.f && dy == 0.f)) return 0;
+    const auto point  = DocumentPoint(service, x, y);
+    const auto nested = service->doc->on_scroll(dx, dy, point.x, point.y, x, y);
+    float consumed_x = 0.f;
+    float consumed_y = 0.f;
+    for(const auto& scroll : nested)
+    {
+        consumed_x += static_cast<float>(scroll.dx);
+        consumed_y += static_cast<float>(scroll.dy);
+    }
+
+    const float old_x = service->scroll_x;
+    const float old_y = service->scroll_y;
+    litehtml_layout_scroll_by(service, dx - consumed_x, dy - consumed_y);
+    return !nested.empty() || service->scroll_x != old_x || service->scroll_y != old_y ? 1 : 0;
+}
+
 LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, litehtml_layout_element* element)
 {
     if(!service || !service->has_rendered || !IsCurrentElement(element) || element->service != service) return;
@@ -999,9 +1023,7 @@ LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_elemen
     if(!IsCurrentElement(element) || !name) return 0;
     // litehtml models attributes as strings.  Erasing the source attribute is
     // important for HTML boolean attributes: checked="false" is still checked.
-    auto tag = std::dynamic_pointer_cast<litehtml::html_tag>(element->element);
-    if(!tag) return 0;
-    if(!tag->remove_attr(name)) return 0;
+    if(!element->element->remove_attr(name)) return 0;
     return 1;
 }
 

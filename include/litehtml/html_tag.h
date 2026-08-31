@@ -70,7 +70,7 @@ namespace litehtml
         }
 
         void        set_attr(const char* name, const char* val) override;
-        bool        remove_attr(const char* name);
+        bool        remove_attr(const char* name) override;
         const char* get_attr(const char* name, const char* def = nullptr) const override;
         void        apply_stylesheet(const litehtml::css& stylesheet) override;
         void        reset_styles() override;
