@@ -239,6 +239,12 @@ namespace litehtml
             return m_cb ? m_cb->user : nullptr;
         }
 
+        void set_fallback_viewport(float width, float height)
+        {
+            m_viewport_width = width;
+            m_viewport_height = height;
+        }
+
         // ---- 字体 ----
         litehtml::uint_ptr create_font(const font_description& descr, const document* doc,
                                        font_metrics* fm) override
@@ -428,6 +434,7 @@ namespace litehtml
         // ---- 视口 / 媒体 ----
         void get_viewport(litehtml::position& viewport) const override
         {
+            viewport = litehtml::position(0, 0, m_viewport_width, m_viewport_height);
             if(m_cb && m_cb->get_viewport)
             {
                 litehtml_rect cv{};
@@ -441,6 +448,13 @@ namespace litehtml
 
         void get_media_features(litehtml::media_features& media) const override
         {
+            media.type = litehtml::media_type_screen;
+            media.width = m_viewport_width;
+            media.height = m_viewport_height;
+            media.device_width = m_viewport_width;
+            media.device_height = m_viewport_height;
+            media.color = 8;
+            media.resolution = 96;
             if(m_cb && m_cb->get_media_features)
             {
                 litehtml_media_features cm{};
@@ -577,6 +591,8 @@ namespace litehtml
 
       private:
         const litehtml_layout_callbacks* m_cb;
+        float m_viewport_width = 0.f;
+        float m_viewport_height = 0.f;
     };
 } // namespace litehtml
 
@@ -605,6 +621,8 @@ struct litehtml_layout_element
 
 namespace
 {
+    void ClampScroll(litehtml_layout_service* service);
+
     litehtml_layout_element* MakeElementHandle(litehtml_layout_service* service, const litehtml::element::ptr& element)
     {
         if(!service || !element) return nullptr;
@@ -632,6 +650,18 @@ namespace
     {
         if(auto* script = dynamic_cast<litehtml::el_script*>(element.get())) scripts.push_back(script);
         for(const auto& child : element->children()) CollectScripts(child, scripts);
+    }
+
+    litehtml::element::ptr FindElementById(const litehtml::element::ptr& element, const char* id)
+    {
+        if(!element || !id) return nullptr;
+        const char* element_id = element->get_attr("id");
+        if(element_id && std::strcmp(element_id, id) == 0) return element;
+        for(const auto& child : element->children())
+        {
+            if(auto found = FindElementById(child, id)) return found;
+        }
+        return nullptr;
     }
 }
 
@@ -743,12 +773,17 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
     }
     service->viewport_w = viewport_width;
     service->viewport_h = viewport_height;
+    service->container.set_fallback_viewport(viewport_width, viewport_height);
     service->scroll_x = 0.f;
     service->scroll_y = 0.f;
     service->node_ids.clear();
     service->next_node_id = 1;
 
-    std::string base = base_url ? base_url : "";
+    // Establish the document URL before parsing. Relative image, link and CSS
+    // callbacks use the host's current base URL when litehtml passes no
+    // resource-specific base. A <base href> encountered during parsing may
+    // subsequently replace this value through the same callback.
+    service->container.set_base_url(base_url ? base_url : "");
     // Browsers paint the document canvas to the viewport even when body content is
     // shorter.  Without this rule litehtml correctly sizes body to its content, but
     // the host widget's background becomes visible below a short JS page.
@@ -773,6 +808,7 @@ LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
                                            : static_cast<litehtml::pixel_t>(service->viewport_w);
     litehtml::render_type rt = static_cast<litehtml::render_type>(render_type);
     service->doc->render(mw, rt);
+    ClampScroll(service);
     return 1;
 }
 
@@ -788,6 +824,7 @@ LITEHTML_API int litehtml_layout_render_dirty(litehtml_layout_service* service,
     const litehtml::pixel_t mw = max_width > 0.f ? static_cast<litehtml::pixel_t>(max_width)
                                                    : static_cast<litehtml::pixel_t>(service->viewport_w);
     service->doc->render_dirty(changed_root->element, mw, static_cast<litehtml::render_type>(render_type));
+    ClampScroll(service);
     return 1;
 }
 
@@ -889,7 +926,7 @@ LITEHTML_API const char* litehtml_layout_get_script_src(litehtml_layout_service*
 LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_id(litehtml_layout_service* service, const char* id)
 {
     if(!service || !service->doc || !id) return nullptr;
-    return MakeElementHandle(service, service->doc->root()->select_one("#" + std::string(id)));
+    return MakeElementHandle(service, FindElementById(service->doc->root(), id));
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_query_selector(litehtml_layout_service* service, const char* selector)
@@ -908,7 +945,7 @@ LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* eleme
 
 LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name)
 {
-    return element && element->element && name ? element->element->get_attr(name) : nullptr;
+    return IsCurrentElement(element) && name ? element->element->get_attr(name) : nullptr;
 }
 
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value)
@@ -931,7 +968,7 @@ LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_elemen
 
 LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_element* element)
 {
-    if(!element || !element->element) return nullptr;
+    if(!IsCurrentElement(element)) return nullptr;
     element->text_cache.clear();
     element->element->get_text(element->text_cache);
     return element->text_cache.c_str();
@@ -939,23 +976,22 @@ LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_
 
 LITEHTML_API uint64_t litehtml_layout_element_get_node_id(const litehtml_layout_element* element)
 {
-    return element ? GetNodeId(element->service, element->element) : 0;
+    return IsCurrentElement(element) ? GetNodeId(element->service, element->element) : 0;
 }
 
 LITEHTML_API const char* litehtml_layout_element_get_tag_name(const litehtml_layout_element* element)
 {
-    return element && element->element ? element->element->get_tagName() : nullptr;
+    return IsCurrentElement(element) ? element->element->get_tagName() : nullptr;
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const litehtml_layout_element* element)
 {
-    return element && element->service && element->element ? MakeElementHandle(element->service, element->element->parent())
-                                                           : nullptr;
+    return IsCurrentElement(element) ? MakeElementHandle(element->service, element->element->parent()) : nullptr;
 }
 
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect)
 {
-    if(!element || !element->element || !out_rect) return 0;
+    if(!IsCurrentElement(element) || !out_rect) return 0;
     const auto placement = element->element->get_placement();
     out_rect->x = placement.x;
     out_rect->y = placement.y;
@@ -978,7 +1014,7 @@ LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* p
 
 LITEHTML_API int litehtml_layout_element_get_child_count(const litehtml_layout_element* parent)
 {
-    if(!parent || !parent->element) return 0;
+    if(!IsCurrentElement(parent)) return 0;
     int count = 0;
     for(const auto& child : parent->element->children()) if(child && child->get_tagName()) ++count;
     return count;
@@ -986,7 +1022,7 @@ LITEHTML_API int litehtml_layout_element_get_child_count(const litehtml_layout_e
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_child(const litehtml_layout_element* parent, int index)
 {
-    if(!parent || !parent->service || !parent->element || index < 0) return nullptr;
+    if(!IsCurrentElement(parent) || index < 0) return nullptr;
     for(const auto& child : parent->element->children())
     {
         if(!child || !child->get_tagName()) continue;

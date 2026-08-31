@@ -5,6 +5,7 @@ project(litehtml LANGUAGES C CXX)
 option(LITEHTML_BUILD_TESTING "enable testing for litehtml" OFF)
 option(LITEHTML_ENABLE_LINT "enable linting for litehtml" ON)
 option(LITEHTML_ENABLE_STYLE_DIAGNOSTICS "export style invalidation benchmark telemetry" OFF)
+option(LITEHTML_BUILD_LAYOUT_API_TESTS "build local C layout API regression tests" OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -230,6 +231,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE include/${PROJECT_NAME})
 
 # Gumbo
 target_link_libraries(${PROJECT_NAME} PUBLIC gumbo)
+
+if(LITEHTML_BUILD_LAYOUT_API_TESTS)
+	enable_testing()
+	add_executable(litehtml-layout-api-tests tests/litehtml_layout_api_tests.cpp)
+	target_link_libraries(litehtml-layout-api-tests PRIVATE ${PROJECT_NAME})
+	set_target_properties(litehtml-layout-api-tests PROPERTIES CXX_STANDARD 17)
+	add_test(NAME litehtml-layout-api-tests COMMAND litehtml-layout-api-tests)
+endif()
 
 # install and export
 install(TARGETS ${PROJECT_NAME}
