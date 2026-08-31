@@ -936,8 +936,7 @@ LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, li
 {
     if(!service || !service->has_rendered || !IsCurrentElement(element) || element->service != service) return;
     const auto placement = element->element->get_placement();
-    // 目标元素顶部对齐视口顶部（保留少量边距）。
-    service->scroll_y = static_cast<float>(placement.y) - 8.f;
+    service->scroll_y = static_cast<float>(placement.y);
     ClampScroll(service);
 }
 

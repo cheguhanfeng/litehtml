@@ -520,6 +520,12 @@ namespace litehtml
 
     element::ptr document::create_element(const char* tag_name, const string_map& attributes)
     {
+        if(!tag_name || !tag_name[0]) return nullptr;
+        // Programmatic creation follows HTML's ASCII case-insensitive local-name
+        // rules, just like tags normalized by the parser.
+        const std::string normalized_tag = lowcase(tag_name);
+        tag_name                        = normalized_tag.c_str();
+
         element::ptr  newTag;
         document::ptr this_doc = shared_from_this();
         if(m_container)

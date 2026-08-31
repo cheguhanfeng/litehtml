@@ -515,6 +515,71 @@ namespace
         litehtml_layout_destroy(service);
         return passed;
     }
+
+    bool test_programmatic_html_tag_names_are_case_insensitive()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service, "<!doctype html><html><body id='body'></body></html>", nullptr, 800, 600) != 0,
+                               "programmatic-tag document failed to load");
+        auto* body   = litehtml_layout_get_element_by_id(service, "body");
+        auto* script = litehtml_layout_create_element(service, "SCRIPT");
+        passed       = expect(body != nullptr && script != nullptr, "uppercase script element could not be created") &&
+                 expect(std::string(litehtml_layout_element_get_tag_name(script)) == "script",
+                        "programmatic HTML tag name was not normalized") &&
+                 expect(litehtml_layout_element_set_attribute(script, "src", "dynamic.js") != 0,
+                        "programmatic script src could not be set") &&
+                 expect(litehtml_layout_element_set_inner_html(script, "dynamic()") != 0,
+                        "programmatic script text could not be set") &&
+                 expect(litehtml_layout_element_append_child(body, script) != 0,
+                        "programmatic script could not be attached") &&
+                 expect(litehtml_layout_get_script_count(service) == 1,
+                        "uppercase programmatic script lost special element semantics") &&
+                 expect(std::string(litehtml_layout_get_script(service, 0)) == "dynamic()",
+                        "programmatic script text was not collected") &&
+                 expect(std::string(litehtml_layout_get_script_src(service, 0)) == "dynamic.js",
+                        "programmatic script src was not collected") &&
+                 passed;
+        litehtml_layout_element_destroy(script);
+        litehtml_layout_element_destroy(body);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
+
+    bool test_scroll_to_aligns_element_top_exactly()
+    {
+        callback_state            state;
+        litehtml_layout_callbacks callbacks{};
+        callbacks.user = &state;
+
+        auto* service = litehtml_layout_create(&callbacks);
+        bool  passed  = expect(litehtml_layout_load_html(
+                                 service,
+                                 "<!doctype html><html><body style='margin:0'>"
+                                 "<div style='height:400px'></div><div id='target' style='height:50px'></div>"
+                                 "<div style='height:1000px'></div></body></html>",
+                                 nullptr, 800, 300) != 0,
+                               "scroll-to document failed to load") &&
+                      expect(litehtml_layout_render(service, 0, litehtml_render_all) != 0,
+                             "scroll-to document failed to render");
+        auto* target = litehtml_layout_get_element_by_id(service, "target");
+        litehtml_rect placement{};
+        passed = expect(target != nullptr, "scroll-to target was not found") &&
+                 expect(litehtml_layout_element_get_placement(target, &placement) != 0,
+                        "scroll-to target placement was unavailable") &&
+                 passed;
+        litehtml_layout_scroll_to(service, target);
+        passed = expect(std::fabs(litehtml_layout_get_scroll_y(service) - placement.y) < 0.01f,
+                        "scroll_to did not align the target top with the viewport top") &&
+                 passed;
+        litehtml_layout_element_destroy(target);
+        litehtml_layout_destroy(service);
+        return passed;
+    }
 } // namespace
 
 int main()
@@ -529,7 +594,9 @@ int main()
                    test_fixed_hit_testing_uses_unscrolled_client_coordinates() &&
                    test_mouse_up_coordinates_control_click_activation() && test_mouse_leave_clears_hover_state() &&
                    test_scroll_input_prefers_nested_overflow_then_page() &&
-                   test_script_inner_html_replaces_source_text() && test_script_src_uses_html_attribute_semantics()
+                   test_script_inner_html_replaces_source_text() && test_script_src_uses_html_attribute_semantics() &&
+                   test_programmatic_html_tag_names_are_case_insensitive() &&
+                   test_scroll_to_aligns_element_top_exactly()
                ? EXIT_SUCCESS
                : EXIT_FAILURE;
 }
