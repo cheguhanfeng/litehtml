@@ -498,14 +498,13 @@ namespace litehtml
 
         void on_anchor_click(const char* url, const litehtml::element::ptr& el) override
         {
-            if(m_cb && m_cb->on_anchor_click)
-            {
-                m_cb->on_anchor_click(url, user());
-            }
             if(m_cb && m_cb->on_anchor_click_ex)
             {
                 const char* target = el ? el->get_attr("target", "") : "";
                 m_cb->on_anchor_click_ex(url, target ? target : "", user());
+            } else if(m_cb && m_cb->on_anchor_click)
+            {
+                m_cb->on_anchor_click(url, user());
             }
         }
 
@@ -602,14 +601,21 @@ namespace litehtml
 
 struct litehtml_layout_service
 {
+    struct node_id_entry
+    {
+        std::weak_ptr<litehtml::element> element;
+        uint64_t                         id = 0;
+    };
+
     litehtml::layout_container  container;
     litehtml::document::ptr     doc;
     float                       viewport_w = 0.f;
     float                       viewport_h = 0.f;
     float                       scroll_x = 0.f;
     float                       scroll_y = 0.f;
+    bool                        has_rendered = false;
     uint64_t                    next_node_id = 1;
-    std::unordered_map<const litehtml::element*, uint64_t> node_ids;
+    std::unordered_map<const litehtml::element*, node_id_entry> node_ids;
 };
 
 struct litehtml_layout_element
@@ -622,6 +628,11 @@ struct litehtml_layout_element
 namespace
 {
     void ClampScroll(litehtml_layout_service* service);
+
+    bool IsValidRenderType(int render_type)
+    {
+        return render_type >= litehtml_render_all && render_type <= litehtml_render_fixed_only;
+    }
 
     litehtml_layout_element* MakeElementHandle(litehtml_layout_service* service, const litehtml::element::ptr& element)
     {
@@ -641,9 +652,12 @@ namespace
     uint64_t GetNodeId(litehtml_layout_service* service, const litehtml::element::ptr& element)
     {
         if(!service || !element) return 0;
-        const auto [it, inserted] = service->node_ids.emplace(element.get(), service->next_node_id);
-        if(inserted) ++service->next_node_id;
-        return it->second;
+        auto [it, inserted] = service->node_ids.try_emplace(element.get());
+        if(!inserted && it->second.element.lock() == element) return it->second.id;
+
+        it->second.element = element;
+        it->second.id      = service->next_node_id++;
+        return it->second.id;
     }
 
     void CollectScripts(const litehtml::element::ptr& element, std::vector<const litehtml::el_script*>& scripts)
@@ -776,6 +790,7 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
     service->container.set_fallback_viewport(viewport_width, viewport_height);
     service->scroll_x = 0.f;
     service->scroll_y = 0.f;
+    service->has_rendered = false;
     service->node_ids.clear();
     service->next_node_id = 1;
 
@@ -796,11 +811,32 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
     return service->doc ? 1 : 0;
 }
 
+LITEHTML_API int litehtml_layout_set_viewport(litehtml_layout_service* service,
+                                              float viewport_width,
+                                              float viewport_height)
+{
+    if(!service || viewport_width <= 0.f || viewport_height <= 0.f) return 0;
+    service->viewport_w = viewport_width;
+    service->viewport_h = viewport_height;
+    service->container.set_fallback_viewport(viewport_width, viewport_height);
+    service->has_rendered = false;
+    if(service->doc)
+    {
+        service->doc->media_changed();
+        // Viewport units also depend on these values even when no @media rule
+        // changes state, so force computed lengths to be rebuilt on render.
+        service->doc->invalidate_styles();
+    }
+    ClampScroll(service);
+    return 1;
+}
+
 LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
                                         float max_width,
                                         int render_type)
 {
-    if(!service || !service->doc)
+    if(!service || !service->doc || !IsValidRenderType(render_type) ||
+       (render_type == litehtml_render_fixed_only && !service->has_rendered))
     {
         return 0;
     }
@@ -808,6 +844,7 @@ LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
                                            : static_cast<litehtml::pixel_t>(service->viewport_w);
     litehtml::render_type rt = static_cast<litehtml::render_type>(render_type);
     service->doc->render(mw, rt);
+    if(render_type != litehtml_render_fixed_only) service->has_rendered = true;
     ClampScroll(service);
     return 1;
 }
@@ -817,20 +854,22 @@ LITEHTML_API int litehtml_layout_render_dirty(litehtml_layout_service* service,
                                               float max_width,
                                               int render_type)
 {
-    if(!service || !service->doc || !IsCurrentElement(changed_root) || changed_root->service != service)
+    if(!service || !service->doc || !IsCurrentElement(changed_root) || changed_root->service != service ||
+       !IsValidRenderType(render_type) || (render_type == litehtml_render_fixed_only && !service->has_rendered))
     {
         return 0;
     }
     const litehtml::pixel_t mw = max_width > 0.f ? static_cast<litehtml::pixel_t>(max_width)
                                                    : static_cast<litehtml::pixel_t>(service->viewport_w);
     service->doc->render_dirty(changed_root->element, mw, static_cast<litehtml::render_type>(render_type));
+    if(render_type != litehtml_render_fixed_only) service->has_rendered = true;
     ClampScroll(service);
     return 1;
 }
 
 LITEHTML_API void litehtml_layout_draw(litehtml_layout_service* service)
 {
-    if(!service || !service->doc)
+    if(!service || !service->doc || !service->has_rendered)
     {
         return;
     }
@@ -871,7 +910,7 @@ LITEHTML_API void litehtml_layout_scroll_by(litehtml_layout_service* service, fl
 
 LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, litehtml_layout_element* element)
 {
-    if(!service || !IsCurrentElement(element) || element->service != service) return;
+    if(!service || !service->has_rendered || !IsCurrentElement(element) || element->service != service) return;
     const auto placement = element->element->get_placement();
     // 目标元素顶部对齐视口顶部（保留少量边距）。
     service->scroll_y = static_cast<float>(placement.y) - 8.f;
@@ -991,7 +1030,7 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const l
 
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect)
 {
-    if(!IsCurrentElement(element) || !out_rect) return 0;
+    if(!IsCurrentElement(element) || !element->service->has_rendered || !out_rect) return 0;
     const auto placement = element->element->get_placement();
     out_rect->x = placement.x;
     out_rect->y = placement.y;
@@ -1092,7 +1131,7 @@ namespace
 
 LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service, float x, float y)
 {
-    if(!service || !service->doc) return 0;
+    if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
     return service->doc->on_mouse_over(point.x, point.y, point.x, point.y, IgnoreRedrawBox)
                ? 1
@@ -1101,7 +1140,7 @@ LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service,
 
 LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service, float x, float y)
 {
-    if(!service || !service->doc) return 0;
+    if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
     return service->doc->on_lbutton_down(point.x, point.y, point.x, point.y, IgnoreRedrawBox)
                ? 1
@@ -1115,7 +1154,7 @@ LITEHTML_API int litehtml_layout_on_mouse_up(litehtml_layout_service* service, f
 
 LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service, float x, float y, int activate_default)
 {
-    if(!service || !service->doc) return 0;
+    if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
     return service->doc->on_lbutton_up(point.x, point.y, point.x, point.y, IgnoreRedrawBox, activate_default != 0)
                ? 1
@@ -1124,13 +1163,13 @@ LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service
 
 LITEHTML_API int litehtml_layout_on_mouse_cancel(litehtml_layout_service* service)
 {
-    if(!service || !service->doc) return 0;
+    if(!service || !service->doc || !service->has_rendered) return 0;
     return service->doc->on_button_cancel(IgnoreRedrawBox) ? 1 : 0;
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_hit_test(litehtml_layout_service* service, float x, float y)
 {
-    if(!service || !service->doc || !service->doc->root_render()) return nullptr;
+    if(!service || !service->doc || !service->has_rendered || !service->doc->root_render()) return nullptr;
     const auto point = DocumentPoint(service, x, y);
     return MakeElementHandle(service, service->doc->root_render()->get_element_by_point(
                                           point.x, point.y, point.x, point.y, nullptr));

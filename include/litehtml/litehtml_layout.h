@@ -227,7 +227,8 @@ typedef struct litehtml_layout_callbacks
     void (*transform_text)(char* text, int text_transform, void* user);
     void (*import_css)(char* text, const char* url, char* baseurl, void* user);
     /* Extended anchor notification. Kept at the end for source compatibility
-       with hosts that only implement on_anchor_click. target is never NULL. */
+       with hosts that only implement on_anchor_click. When present it supersedes
+       on_anchor_click, so one activation emits one notification. target is never NULL. */
     void (*on_anchor_click_ex)(const char* url, const char* target, void* user);
 
     /* Paint-time clipping. Calls are balanced and may be nested. The clip uses
@@ -326,6 +327,11 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
                                            const char* base_url,
                                            float viewport_width,
                                            float viewport_height);
+
+/* 更新视口而不重载 DOM。使媒体查询和 vw/vh 样式失效；下次 render 生效。 */
+LITEHTML_API int litehtml_layout_set_viewport(litehtml_layout_service* service,
+                                              float viewport_width,
+                                              float viewport_height);
 
 /* 触发布局。max_width 为布局最大宽度（<=0 时用视口宽）。 */
 LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
