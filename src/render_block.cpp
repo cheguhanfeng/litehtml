@@ -100,83 +100,53 @@ std::shared_ptr<litehtml::render_item> litehtml::render_item_block::init()
         ++iter;
     }
 
-    bool has_block_level = false;
-    bool has_inlines     = false;
-    for(const auto& el : m_children)
-    {
-        if(!el->src_el()->is_float())
-        {
-            if(el->src_el()->is_block_box())
-            {
-                has_block_level = true;
-            } else if(el->src_el()->is_inline())
-            {
-                has_inlines = true;
-            }
-        }
-        if(has_block_level && has_inlines)
-        {
-            break;
-        }
-    }
+    const bool has_block_level = std::any_of(m_children.begin(), m_children.end(), [](const auto& el) {
+        return !el->src_el()->is_float() && el->src_el()->is_block_box();
+    });
     if(has_block_level)
     {
         ret = std::make_shared<render_item_block_context>(src_el());
         ret->parent(parent());
 
-        auto                 doc = src_el()->get_document();
         decltype(m_children) new_children;
         decltype(m_children) inlines;
         bool                 not_ws_added = false;
-        for(const auto& el : m_children)
-        {
-            if(el->src_el()->is_inline())
-            {
-                inlines.push_back(el);
-                if(!el->src_el()->is_white_space())
-                {
-                    not_ws_added = true;
-                }
-            } else
-            {
-                if(not_ws_added)
-                {
-                    auto anon_el = std::make_shared<html_tag>(src_el());
-                    auto anon_ri = std::make_shared<render_item_block>(anon_el);
-                    for(const auto& inl : inlines)
-                    {
-                        anon_ri->add_child(inl);
-                    }
-
-                    not_ws_added = false;
-                    new_children.push_back(anon_ri);
-                    anon_ri->parent(ret);
-                }
-                new_children.push_back(el);
-                el->parent(ret);
-                inlines.clear();
-            }
-        }
-        if(!inlines.empty() && not_ws_added)
-        {
+        auto flush_inlines = [&] {
+            if(!not_ws_added) { inlines.clear(); return; }
             auto anon_el = std::make_shared<html_tag>(src_el());
             auto anon_ri = std::make_shared<render_item_block>(anon_el);
-            for(const auto& inl : inlines)
-            {
-                anon_ri->add_child(inl);
-            }
-
+            for(const auto& inl : inlines) inl->parent(anon_ri);
+            anon_ri->children().splice(anon_ri->children().end(), inlines);
             new_children.push_back(anon_ri);
             anon_ri->parent(ret);
+            not_ws_added = false;
+        };
+        // init consumes this temporary block item. Transfer its existing list
+        // nodes instead of allocating copies for grouping and the final item.
+        while(!m_children.empty())
+        {
+            auto current = m_children.begin();
+            const auto& el = *current;
+            if(el->src_el()->is_inline())
+            {
+                if(!el->src_el()->is_white_space()) not_ws_added = true;
+                inlines.splice(inlines.end(), m_children, current);
+            } else
+            {
+                flush_inlines();
+                el->parent(ret);
+                new_children.splice(new_children.end(), m_children, current);
+            }
         }
-        ret->children() = new_children;
+        flush_inlines();
+        ret->children().swap(new_children);
     }
 
     if(!ret)
     {
         ret = std::make_shared<render_item_inline_context>(src_el());
         ret->parent(parent());
-        ret->children() = children();
+        ret->children().swap(m_children);
         for(const auto& el : ret->children())
         {
             el->parent(ret);

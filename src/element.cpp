@@ -29,7 +29,7 @@ namespace litehtml
         bool     is_first = true;
         for(const auto& ri_el : m_renders)
         {
-            auto ri = ri_el.lock();
+            auto ri = ri_el.item.lock();
             if(ri)
             {
                 position ri_pos = ri->get_placement();
@@ -193,7 +193,12 @@ namespace litehtml
 
     void element::add_render(const std::shared_ptr<render_item>& ri)
     {
-        m_renders.push_back(ri);
+        // A structural rebuild also recreates items for untouched DOM nodes.
+        // Release expired weak references and their control blocks. Keep the
+        // small reference buffer for the next rebuild instead of allocating nodes.
+        m_renders.erase(std::remove_if(m_renders.begin(), m_renders.end(),
+            [](const render_reference& old) { return old.item.expired(); }), m_renders.end());
+        m_renders.push_back({ri, m_next_render_sequence++});
     }
 
     bool element::find_styles_changes(const std::function<void(const position&)>& redraw_box)
@@ -210,7 +215,7 @@ namespace litehtml
             auto process_boxes = [&](const std::shared_ptr<element>& el) {
                 for(const auto& weak_ri : el->m_renders)
                 {
-                    auto ri = weak_ri.lock();
+                    auto ri = weak_ri.item.lock();
                     if(ri)
                     {
                         ri->get_rendering_boxes(redraw_box);
@@ -239,6 +244,7 @@ namespace litehtml
 
     element::ptr element::_add_before_after(int type, const style& /*style*/)
     {
+        get_document()->invalidate_dom_indexes();
         element::ptr el;
         if(type == 0)
         {
@@ -410,7 +416,7 @@ namespace litehtml
         {
             return 0_px;
         }
-        auto ri_el = m_renders.front().lock();
+        auto ri_el = m_renders.front().item.lock();
         if(!ri_el)
         {
             return 0_px;
@@ -424,7 +430,7 @@ namespace litehtml
         {
             return 0_px;
         }
-        auto ri_el = m_renders.front().lock();
+        auto ri_el = m_renders.front().item.lock();
         if(!ri_el)
         {
             return 0_px;
@@ -434,16 +440,22 @@ namespace litehtml
 
     void litehtml::element::run_on_renderers(const std::function<bool(const std::shared_ptr<render_item>&)>& func)
     {
-        for(const auto& weak_ri : m_renders)
+        // The sequence identifies an occurrence even when the same renderer is
+        // registered twice. The normal read-only walk is linear; only a callback
+        // that changes the current index needs a search. Never hold an iterator
+        // across a callback that can append and prune expired references.
+        for(size_t index = 0; index < m_renders.size();)
         {
-            auto ri = weak_ri.lock();
-            if(ri)
+            const auto sequence = m_renders[index].sequence;
+            if(auto ri = m_renders[index].item.lock())
             {
-                if(!func(ri))
-                {
-                    break;
-                }
+                if(!func(ri)) break;
             }
+            if(index < m_renders.size() && m_renders[index].sequence == sequence)
+                ++index;
+            else
+                index = std::upper_bound(m_renders.begin(), m_renders.end(), sequence,
+                    [](uint64_t key, const render_reference& value) { return key < value.sequence; }) - m_renders.begin();
         }
     }
 

@@ -34,6 +34,7 @@ namespace litehtml
         pixel_t                m_current_left;
 
       public:
+        bool has_floats() const { return !m_floats_left.empty() || !m_floats_right.empty(); }
         formatting_context() :
             m_current_top(0),
             m_current_left(0)

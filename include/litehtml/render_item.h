@@ -18,6 +18,7 @@ namespace litehtml
 
     class render_item : public std::enable_shared_from_this<render_item>
     {
+        friend class parallel_layout_snapshot;
       protected:
         std::shared_ptr<element>                  m_element;
         std::weak_ptr<render_item>                m_parent;
@@ -120,6 +121,14 @@ namespace litehtml
         void set_text_override(std::string text)
         {
             m_text_override = std::move(text);
+        }
+
+        // Caller proves identical measured text geometry and a single retained item.
+        void replace_equal_size_text_source(const std::shared_ptr<element>& text)
+        {
+            m_element->reset_styles(); // Detached old node must not retain this placement.
+            m_element = text;
+            text->add_render(shared_from_this());
         }
 
         const std::string& text_override() const

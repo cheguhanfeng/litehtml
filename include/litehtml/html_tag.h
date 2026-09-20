@@ -68,6 +68,10 @@ namespace litehtml
         {
             return m_str_classes;
         }
+        const string_map& attributes() const
+        {
+            return m_attrs;
+        }
 
         void        set_attr(const char* name, const char* val) override;
         bool        remove_attr(const char* name) override;

@@ -32,7 +32,9 @@ namespace litehtml
         std::weak_ptr<document>               m_doc;
         elements_list                         m_children;
         css_properties                        m_css;
-        std::list<std::weak_ptr<render_item>> m_renders;
+        struct render_reference { std::weak_ptr<render_item> item; uint64_t sequence; };
+        std::vector<render_reference> m_renders;
+        uint64_t m_next_render_sequence = 0;
         used_selector::vector                 m_used_styles;
 
         virtual void select_all(const css_selector& selector, elements_list& res);
@@ -150,6 +152,14 @@ namespace litehtml
 
         bool requires_styles_update();
         void add_render(const std::shared_ptr<render_item>& ri);
+        void replace_render(const std::shared_ptr<render_item>& old_item, const std::shared_ptr<render_item>& new_item)
+        {
+            m_renders.erase(std::remove_if(m_renders.begin(), m_renders.end(), [&](const render_reference& value) {
+                auto item = value.item.lock(); return !item || item == old_item;
+            }), m_renders.end());
+            m_renders.push_back({new_item, m_next_render_sequence++});
+        }
+        size_t render_reference_count() const { return m_renders.size(); }
         bool find_styles_changes(const std::function<void(const position&)>& redraw_box);
 
         element::ptr add_pseudo_before(const style& style)
@@ -239,11 +249,18 @@ namespace litehtml
 
     inline std::shared_ptr<render_item> element::get_render_item()
     {
-        if(m_renders.empty())
+        // Rebuilding the render tree appends fresh weak references. Expired
+        // references from the previous tree must not hide the current item.
+        for(size_t index = 0; index < m_renders.size(); ++index)
         {
-            return nullptr;
+            if(auto current = m_renders[index].item.lock())
+            {
+                m_renders.erase(m_renders.begin(), m_renders.begin() + index);
+                return current;
+            }
         }
-        return m_renders.front().lock();
+        m_renders.clear();
+        return nullptr;
     }
 } // namespace litehtml
 

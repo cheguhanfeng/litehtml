@@ -493,7 +493,9 @@ std::list<litehtml::flex_line> litehtml::render_item_flex::get_lines(
 
 std::shared_ptr<litehtml::render_item> litehtml::render_item_flex::init()
 {
-    auto                 doc = src_el()->get_document();
+    // This override does not call render_item::init(). Register the container
+    // itself as well as its children so DOM geometry queries can find it.
+    src_el()->add_render(shared_from_this());
     decltype(m_children) new_children;
     decltype(m_children) inlines;
 
@@ -512,31 +514,23 @@ std::shared_ptr<litehtml::render_item> litehtml::render_item_flex::init()
 
             auto anon_el = std::make_shared<html_tag>(src_el());
             auto anon_ri = std::make_shared<render_item_block>(anon_el);
-            for(const auto& inl : inlines)
-            {
-                anon_ri->add_child(inl);
-            }
+            for(const auto& inl : inlines) inl->parent(anon_ri);
+            anon_ri->children().splice(anon_ri->children().end(), inlines);
             anon_ri->parent(shared_from_this());
 
             new_children.push_back(anon_ri->init());
-            inlines.clear();
         }
     };
 
-    for(const auto& el : m_children)
+    while(!m_children.empty())
     {
+        auto current = m_children.begin();
+        auto& el = *current;
         if(el->src_el()->css().get_display() == display_inline_text)
         {
-            if(!inlines.empty())
-            {
-                inlines.push_back(el);
-            } else
-            {
-                if(!el->src_el()->is_white_space())
-                {
-                    inlines.push_back(el);
-                }
-            }
+            if(!inlines.empty() || !el->src_el()->is_white_space())
+                inlines.splice(inlines.end(), m_children, current);
+            else m_children.erase(current);
         } else
         {
             convert_inlines();
@@ -544,20 +538,24 @@ std::shared_ptr<litehtml::render_item> litehtml::render_item_flex::init()
             {
                 // Add block boxes as is
                 el->parent(shared_from_this());
-                new_children.push_back(el->init());
+                el = el->init();
+                new_children.splice(new_children.end(), m_children, current);
             } else
             {
                 // Wrap inlines with anonymous block box
                 auto anon_el = std::make_shared<html_tag>(el->src_el());
                 auto anon_ri = std::make_shared<render_item_block>(anon_el);
-                anon_ri->add_child(el->init());
+                // The wrapper initializes its children. An eager el->init()
+                // here would initialize the same inline subtree twice.
+                el->parent(anon_ri);
+                anon_ri->children().splice(anon_ri->children().end(), m_children, current);
                 anon_ri->parent(shared_from_this());
                 new_children.push_back(anon_ri->init());
             }
         }
     }
     convert_inlines();
-    children() = new_children;
+    children().swap(new_children);
 
     return shared_from_this();
 }

@@ -387,6 +387,9 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_query_selector(litehtml_la
 LITEHTML_API litehtml_layout_element* litehtml_layout_create_element(litehtml_layout_service* service, const char* tag);
 LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* element);
 LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name);
+/* Attribute enumeration for DOM compatibility helpers. Names remain owned by the element. */
+LITEHTML_API int litehtml_layout_element_get_attribute_count(const litehtml_layout_element* element);
+LITEHTML_API const char* litehtml_layout_element_get_attribute_name(const litehtml_layout_element* element, int index);
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value);
 /* Removes an attribute (needed for boolean form attributes such as checked). */
 LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_element* element, const char* name);
@@ -400,6 +403,12 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const l
    element or before a document has been rendered. */
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect);
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html);
+/** Optional paint-only numeric replacement; 0 leaves DOM unchanged and requires normal fallback. */
+LITEHTML_API int litehtml_layout_element_try_replace_numeric_text(litehtml_layout_element* element, const char* text);
+/** Diagnostic count including expired weak render references retained by current DOM nodes. */
+LITEHTML_API uint64_t litehtml_layout_get_render_reference_count(const litehtml_layout_service* service);
+/** Number of identity entries, including not-yet-pruned expired weak references. */
+LITEHTML_API uint64_t litehtml_layout_get_node_identity_entry_count(const litehtml_layout_service* service);
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child);
 /* Element-child collection helpers. Returned handles are caller-owned. */
 LITEHTML_API int litehtml_layout_element_get_child_count(const litehtml_layout_element* parent);

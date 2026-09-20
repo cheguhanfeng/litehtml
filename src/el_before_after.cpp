@@ -1,4 +1,5 @@
 #include "html.h"
+#include "document.h"
 #include "el_before_after.h"
 #include "el_text.h"
 #include "el_space.h"
@@ -16,6 +17,7 @@ void litehtml::el_before_after_base::add_style(const style& style)
     html_tag::add_style(style);
 
     auto children = m_children;
+    if(!m_children.empty()) get_document()->invalidate_dom_indexes();
     m_children.clear();
 
     const auto& content_property = style.get_property(_content_);

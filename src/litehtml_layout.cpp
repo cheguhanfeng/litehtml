@@ -18,6 +18,7 @@
 #include "types.h"
 
 #include <cstring>
+#include <iterator>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -616,6 +617,7 @@ struct litehtml_layout_service
     bool                        has_rendered = false;
     uint64_t                    next_node_id = 1;
     std::unordered_map<const litehtml::element*, node_id_entry> node_ids;
+    uint32_t                    identities_since_prune = 0;
 };
 
 struct litehtml_layout_element
@@ -653,6 +655,21 @@ namespace
     uint64_t GetNodeId(litehtml_layout_service* service, const litehtml::element::ptr& element)
     {
         if(!service || !element) return 0;
+        const auto existing = service->node_ids.find(element.get());
+        if(existing != service->node_ids.end() && existing->second.element.lock() == element)
+            return existing->second.id;
+
+        // Expired weak_ptrs retain make_shared's combined allocation. Amortize
+        // cleanup over new identities, never over frequently queried live IDs.
+        if(++service->identities_since_prune >= 256)
+        {
+            for(auto it = service->node_ids.begin(); it != service->node_ids.end();)
+            {
+                if(it->second.element.expired()) it = service->node_ids.erase(it);
+                else ++it;
+            }
+            service->identities_since_prune = 0;
+        }
         auto [it, inserted] = service->node_ids.try_emplace(element.get());
         if(!inserted && it->second.element.lock() == element) return it->second.id;
 
@@ -667,17 +684,6 @@ namespace
         for(const auto& child : element->children()) CollectScripts(child, scripts);
     }
 
-    litehtml::element::ptr FindElementById(const litehtml::element::ptr& element, const char* id)
-    {
-        if(!element || !id) return nullptr;
-        const char* element_id = element->get_attr("id");
-        if(element_id && std::strcmp(element_id, id) == 0) return element;
-        for(const auto& child : element->children())
-        {
-            if(auto found = FindElementById(child, id)) return found;
-        }
-        return nullptr;
-    }
 }
 
 LITEHTML_API litehtml_layout_service* litehtml_layout_create(const litehtml_layout_callbacks* cb)
@@ -794,6 +800,7 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
     service->scroll_y = 0.f;
     service->has_rendered = false;
     service->node_ids.clear();
+    service->identities_since_prune = 0;
     service->next_node_id = 1;
 
     // Establish the document URL before parsing. Relative image, link and CSS
@@ -993,7 +1000,7 @@ LITEHTML_API const char* litehtml_layout_get_script_src(litehtml_layout_service*
 LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_id(litehtml_layout_service* service, const char* id)
 {
     if(!service || !service->doc || !id) return nullptr;
-    return MakeElementHandle(service, FindElementById(service->doc->root(), id));
+    return MakeElementHandle(service, service->doc->get_element_by_id(id));
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_query_selector(litehtml_layout_service* service, const char* selector)
@@ -1013,6 +1020,23 @@ LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* eleme
 LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name)
 {
     return IsCurrentElement(element) && name ? element->element->get_attr(name) : nullptr;
+}
+
+LITEHTML_API int litehtml_layout_element_get_attribute_count(const litehtml_layout_element* element)
+{
+    if(!IsCurrentElement(element)) return 0;
+    const auto tag = std::dynamic_pointer_cast<litehtml::html_tag>(element->element);
+    return tag ? static_cast<int>(tag->attributes().size()) : 0;
+}
+
+LITEHTML_API const char* litehtml_layout_element_get_attribute_name(const litehtml_layout_element* element, int index)
+{
+    if(!IsCurrentElement(element) || index < 0) return nullptr;
+    const auto tag = std::dynamic_pointer_cast<litehtml::html_tag>(element->element);
+    if(!tag || index >= static_cast<int>(tag->attributes().size())) return nullptr;
+    auto attribute = tag->attributes().begin();
+    std::advance(attribute, index);
+    return attribute->first.c_str();
 }
 
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value)
@@ -1071,6 +1095,31 @@ LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element*
     return element->service->doc->set_inner_html(element->element, html) ? 1 : 0;
 }
 
+LITEHTML_API int litehtml_layout_element_try_replace_numeric_text(litehtml_layout_element* element, const char* text)
+{
+    if(!IsCurrentElement(element) || !text) return 0;
+    return element->service->doc->try_replace_equal_size_numeric_text(element->element, text) ? 1 : 0;
+}
+
+LITEHTML_API uint64_t litehtml_layout_get_node_identity_entry_count(const litehtml_layout_service* service)
+{
+    return service ? static_cast<uint64_t>(service->node_ids.size()) : 0;
+}
+
+LITEHTML_API uint64_t litehtml_layout_get_render_reference_count(const litehtml_layout_service* service)
+{
+    if(!service || !service->doc || !service->doc->root()) return 0;
+    uint64_t count = 0;
+    std::vector<litehtml::element::ptr> pending{service->doc->root()};
+    while(!pending.empty())
+    {
+        auto node = pending.back(); pending.pop_back();
+        count += node->render_reference_count();
+        for(const auto& child : node->children()) pending.push_back(child);
+    }
+    return count;
+}
+
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child)
 {
     if(!IsCurrentElement(parent) || !IsCurrentElement(child) || parent->service != child->service) return 0;
@@ -1109,32 +1158,17 @@ LITEHTML_API int litehtml_layout_element_replace_child(litehtml_layout_element* 
     return parent->service->doc->replace_child(parent->element, replacement->element, child->element) ? 1 : 0;
 }
 
-namespace
-{
-    void CollectElementsByTag(const litehtml::element::ptr& element, const std::string& tag,
-        std::vector<litehtml::element::ptr>& result)
-    {
-        if(!element) return;
-        const char* tag_name = element->get_tagName();
-        if(tag_name && litehtml::lowcase(tag_name) == tag) result.push_back(element);
-        for(const auto& child : element->children()) CollectElementsByTag(child, tag, result);
-    }
-}
-
 LITEHTML_API int litehtml_layout_get_elements_by_tag_count(litehtml_layout_service* service, const char* tag)
 {
     if(!service || !service->doc || !tag) return 0;
-    std::vector<litehtml::element::ptr> elements;
-    CollectElementsByTag(service->doc->root(), litehtml::lowcase(tag), elements);
-    return static_cast<int>(elements.size());
+    return static_cast<int>(service->doc->get_elements_by_tag(tag).size());
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_tag(litehtml_layout_service* service, const char* tag, int index)
 {
     if(!service || !service->doc || !tag || index < 0) return nullptr;
-    std::vector<litehtml::element::ptr> elements;
-    CollectElementsByTag(service->doc->root(), litehtml::lowcase(tag), elements);
-    return index < static_cast<int>(elements.size()) ? MakeElementHandle(service, elements[index]) : nullptr;
+    const auto& elements = service->doc->get_elements_by_tag(tag);
+    return index < static_cast<int>(elements.size()) ? MakeElementHandle(service, elements[index].lock()) : nullptr;
 }
 
 namespace

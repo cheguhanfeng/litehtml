@@ -1,4 +1,5 @@
 #include "render_block_context.h"
+#include "parallel_layout.h"
 
 #include "document.h"
 #include "types.h"
@@ -9,6 +10,18 @@ litehtml::rendered_width litehtml::render_item_block_context::_render_content(pi
                                                                               const containing_block_context& self_size,
                                                                               formatting_context*             fmt_ctx)
 {
+    rendered_width parallel_width;
+    pixel_t parallel_height;
+    if(!second_pass && render_parallel_rows(shared_from_this(), self_size, fmt_ctx, parallel_width, parallel_height))
+    {
+        if(self_size.height.type != containing_block_context::cbc_value_type_auto && self_size.height.value > 0_px)
+            m_pos.height = self_size.height;
+        else {
+            m_pos.height = parallel_height;
+            if(collapse_bottom_margin()) m_margins.bottom = std::max(m_margins.bottom, 0_px);
+        }
+        return parallel_width;
+    }
     std::shared_ptr<render_item> last_margin_el;
 
     rendered_width ret_width;

@@ -20,6 +20,10 @@ namespace litehtml
 
         void get_text(std::string& text) const override;
         void compute_styles(bool recursive) override;
+        bool same_measured_size(const el_text& other) const
+        {
+            return m_size.width == other.m_size.width && m_size.height == other.m_size.height;
+        }
         bool is_text() const override
         {
             return true;

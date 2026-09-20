@@ -11,11 +11,13 @@
 #include <cstdint>
 #include <map>
 #include <vector>
+#include <unordered_map>
 
 using GumboOutput = struct GumboInternalOutput;
 
 namespace litehtml
 {
+    class layout_worker_pool;
     struct style_invalidation_stats
     {
         uint64_t computed_refresh_count    = 0;
@@ -88,7 +90,7 @@ namespace litehtml
         std::shared_ptr<element>                m_root;
         std::shared_ptr<render_item>            m_root_render;
         document_container*                     m_container;
-        fonts_map                               m_fonts;
+        std::map<font_description, font_item, font_description_less> m_fonts;
         css_text::vector                        m_css;
         litehtml::css                           m_styles;
         litehtml::web_color                     m_def_color;
@@ -108,8 +110,17 @@ namespace litehtml
         bool                                    m_finalized = false;
         bool                                    m_styles_dirty      = false;
         bool                                    m_render_tree_dirty = false;
+        // Text render children can change without changing their formatting parent.
+        // Their new geometry must still propagate through normal document layout.
+        bool                                    m_flow_layout_dirty = false;
         bool                                    m_author_stylesheets_dirty = false;
         bool                                    m_suppress_stylesheet_collection = false;
+        bool                                    m_id_index_valid = false;
+        std::unordered_map<std::string, std::weak_ptr<element>> m_id_index;
+        bool m_tag_index_valid = false;
+        std::unordered_map<std::string, std::vector<std::weak_ptr<element>>> m_tag_index;
+        // Strong ownership ends with documents, before the host unloads the DLL.
+        std::shared_ptr<layout_worker_pool> m_parallel_pool;
 
         enum class style_match_scope : uint8_t
         {
@@ -133,6 +144,7 @@ namespace litehtml
       public:
         document(document_container* objContainer);
         virtual ~document();
+        std::shared_ptr<layout_worker_pool>& parallel_pool() { return m_parallel_pool; }
 
         document_container* container() const
         {
@@ -209,8 +221,16 @@ namespace litehtml
         }
 
         void append_children_from_string(element& parent, const char* str, bool replace_existing);
+        // Exact HTML id lookup, first match in tree order, without retaining DOM.
+        std::shared_ptr<element> get_element_by_id(const char* id);
+        void invalidate_id_index();
+        const std::vector<std::weak_ptr<element>>& get_elements_by_tag(const char* tag);
+        void invalidate_tag_index();
+        void invalidate_dom_indexes();
         /** Replace an element's children and schedule the required rebuild. */
         bool set_inner_html(const std::shared_ptr<element>& parent, const char* str);
+        // Optional paint-only replacement. Returns false without mutating on any uncertainty.
+        bool try_replace_equal_size_numeric_text(const std::shared_ptr<element>& parent, const char* str);
         /** Attach a caller-created element and schedule the required rebuild. */
         bool append_child(const std::shared_ptr<element>& parent, const std::shared_ptr<element>& child);
         /** Detach a direct child and schedule the required rebuild. */
@@ -236,10 +256,9 @@ namespace litehtml
                                          const std::string&              user_styles   = {});
 
       private:
-        uint_ptr add_font(const font_description& descr, font_metrics* fm);
 
         GumboOutput* parse_html(estring str);
-        void         create_node(void* gnode, elements_list& elements, bool parseTextNode, bool process_root);
+        void         create_node(void* gnode, std::vector<std::shared_ptr<element>>& elements, bool parseTextNode, bool process_root);
         bool         update_media_lists(const media_features& features);
         void         fix_tables_layout();
         void         rebuild_selector_dependencies();

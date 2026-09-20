@@ -6,6 +6,7 @@ option(LITEHTML_BUILD_TESTING "enable testing for litehtml" OFF)
 option(LITEHTML_ENABLE_LINT "enable linting for litehtml" ON)
 option(LITEHTML_ENABLE_STYLE_DIAGNOSTICS "export style invalidation benchmark telemetry" OFF)
 option(LITEHTML_BUILD_LAYOUT_API_TESTS "build local C layout API regression tests" OFF)
+option(LITEHTML_BUILD_BACKGROUND_DEFAULTS_PROBE "build static native background geometry/allocation diagnostic" OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -72,6 +73,7 @@ set(SOURCE_LITEHTML
 	src/css_borders.cpp
 	src/render_item.cpp
 	src/render_block_context.cpp
+	src/parallel_layout.cpp
 	src/render_block.cpp
 	src/render_inline_context.cpp
 	src/render_table.cpp
@@ -230,7 +232,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_include_directories(${PROJECT_NAME} PRIVATE include/${PROJECT_NAME})
 
 # Gumbo
-target_link_libraries(${PROJECT_NAME} PUBLIC gumbo)
+find_package(Threads REQUIRED)
+target_link_libraries(${PROJECT_NAME} PUBLIC gumbo Threads::Threads)
 
 if(LITEHTML_BUILD_LAYOUT_API_TESTS)
 	enable_testing()
@@ -241,6 +244,23 @@ if(LITEHTML_BUILD_LAYOUT_API_TESTS)
 endif()
 
 # install and export
+if(LITEHTML_BUILD_BACKGROUND_DEFAULTS_PROBE)
+	if(LITEHTML_BUILD_SHARED)
+		message(FATAL_ERROR "Background defaults diagnostic requires LITEHTML_BUILD_SHARED=OFF (native C++ interfaces)")
+	endif()
+	add_executable(background-defaults-probe tests/background_defaults_probe.cpp)
+	target_compile_features(background-defaults-probe PRIVATE cxx_std_17)
+	target_link_libraries(background-defaults-probe PRIVATE ${PROJECT_NAME})
+endif()
+
+option(LITEHTML_BUILD_PARALLEL_LAYOUT_PROBE "Build isolated-document parallel layout diagnostic" OFF)
+if(LITEHTML_BUILD_PARALLEL_LAYOUT_PROBE)
+	find_package(Threads REQUIRED)
+	add_executable(litehtml-parallel-layout-probe tests/parallel_layout_probe.cpp)
+	target_link_libraries(litehtml-parallel-layout-probe PRIVATE ${PROJECT_NAME} Threads::Threads)
+	set_target_properties(litehtml-parallel-layout-probe PROPERTIES CXX_STANDARD 17)
+endif()
+
 install(TARGETS ${PROJECT_NAME}
 	EXPORT litehtmlTargets
 	RUNTIME DESTINATION bin COMPONENT libraries

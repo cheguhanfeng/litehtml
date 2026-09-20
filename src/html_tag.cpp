@@ -72,6 +72,7 @@ namespace litehtml
     {
         if(el)
         {
+            get_document()->invalidate_dom_indexes();
             el->parent(shared_from_this());
             m_children.push_back(el);
             return true;
@@ -83,6 +84,7 @@ namespace litehtml
     {
         if(el && el->parent() == shared_from_this())
         {
+            get_document()->invalidate_dom_indexes();
             el->parent(nullptr);
             m_children.remove(el);
             return true;
@@ -92,6 +94,7 @@ namespace litehtml
 
     void litehtml::html_tag::clearRecursive()
     {
+        if(!m_children.empty()) get_document()->invalidate_dom_indexes();
         for(auto& el : m_children)
         {
             el->clearRecursive();
@@ -117,6 +120,7 @@ namespace litehtml
 
     void html_tag::set_tagName(const char* tag)
     {
+        get_document()->invalidate_tag_index();
         m_tag = _id(lowcase(tag));
     }
 
@@ -152,6 +156,7 @@ namespace litehtml
                 }
             } else if(name == "id")
             {
+                get_document()->invalidate_id_index();
                 std::string val = _val;
                 // ids in id selector (#xxx) are matched ASCII case-insensitively in quirks mode
                 if(get_document()->mode() == quirks_mode)
@@ -174,7 +179,7 @@ namespace litehtml
         const std::string old_value = found->second;
         m_attrs.erase(found);
         if(name == "class") { m_classes.clear(); m_str_classes.clear(); }
-        else if(name == "id") { m_id = _id(""); }
+        else if(name == "id") { m_id = _id(""); get_document()->invalidate_id_index(); }
         get_document()->invalidate_attribute_styles(shared_from_this(), name.c_str(), old_value.c_str(), nullptr);
         return true;
     }
@@ -1607,6 +1612,7 @@ namespace litehtml
             if((*child)->tag() == __tag_before_ || (*child)->tag() == __tag_after_)
             {
                 (*child)->parent(nullptr);
+                get_document()->invalidate_dom_indexes();
                 child = m_children.erase(child);
             } else
             {

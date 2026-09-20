@@ -1,3 +1,6 @@
+#include "layout_diagnostics.h"
+#include "render_inline.h"
+#include "render_inline_context.h"
 #include "html.h"
 #include "document.h"
 #include "document_container.h"
@@ -106,15 +109,24 @@ namespace litehtml
             return hash;
         }
 
-        void collect_style_topology(const element::ptr& root, std::vector<style_topology_entry>& result)
+        void collect_style_topology(const element::ptr& root, std::vector<style_topology_entry>& result,
+                                    bool include_layout_signature)
         {
             if(!root) return;
             result.push_back({root.get(), root->css().get_display(), root->css().get_position(), root->tag(),
-                              root->children().size(), layout_signature(root->css())});
+                              root->children().size(), include_layout_signature ? layout_signature(root->css()) : 0});
             for(const auto& child : root->children())
             {
-                collect_style_topology(child, result);
+                collect_style_topology(child, result, include_layout_signature);
             }
+        }
+
+        size_t count_style_nodes(const element::ptr& root)
+        {
+            if(!root) return 0;
+            size_t count = 1;
+            for(const auto& child : root->children()) count += count_style_nodes(child);
+            return count;
         }
 
         bool is_out_of_flow_positioned(const element& el)
@@ -186,7 +198,7 @@ namespace litehtml
         }
 
         // Create litehtml::elements.
-        elements_list root_elements;
+        std::vector<element::ptr> root_elements;
         doc->create_node(output->root, root_elements, true, true);
         element::ptr root;
         if(!root_elements.empty())
@@ -272,21 +284,21 @@ namespace litehtml
             m_root->apply_stylesheet(m_user_css);
 
             // Initialize element::m_css
-            m_root->compute_styles();
+            LH_LAYOUT_PHASE(compute, m_root->compute_styles());
 
             // Create rendering tree
-            m_root_render = m_root->create_render_item(nullptr);
+            LH_LAYOUT_PHASE(tree_create, m_root_render = m_root->create_render_item(nullptr));
 
             // Now the m_tabular_elements is filled with tabular elements.
             // We have to check the tabular elements for missing table elements
             // and create the anonymous boxes in visual table layout
-            fix_tables_layout();
+            LH_LAYOUT_PHASE(table_fix, fix_tables_layout());
 
             // Finally initialize elements
             // init() returns pointer to the render_init element because it can change its type
             if(m_root_render)
             {
-                m_root_render = m_root_render->init();
+                LH_LAYOUT_PHASE(tree_init, m_root_render = m_root_render->init());
             }
         }
     }
@@ -424,7 +436,7 @@ namespace litehtml
         return output;
     }
 
-    void document::create_node(void* gnode, elements_list& elements, bool parseTextNode, bool process_root)
+    void document::create_node(void* gnode, std::vector<element::ptr>& elements, bool parseTextNode, bool process_root)
     {
         auto* node = static_cast<GumboNode*>(gnode);
         switch(node->type)
@@ -462,7 +474,10 @@ namespace litehtml
                     }
                     if(ret)
                     {
-                        elements_list child;
+                        // Results are consumed in order through virtual appendChild.
+                        // Retain the scratch capacity across siblings instead of
+                        // allocating and freeing a list node for every result.
+                        std::vector<element::ptr> child;
                         for(unsigned int i = 0; i < node->v.element.children.length; i++)
                         {
                             child.clear();
@@ -608,53 +623,34 @@ namespace litehtml
         return newTag;
     }
 
-    uint_ptr document::add_font(const font_description& descr, font_metrics* fm)
-    {
-        uint_ptr ret = 0;
-
-        std::string key = descr.hash();
-
-        if(m_fonts.find(key) == m_fonts.end())
-        {
-            font_item fi = {0, {}};
-
-            fi.font      = m_container->create_font(descr, this, &fi.metrics);
-            m_fonts[key] = fi;
-            ret          = fi.font;
-            if(fm)
-            {
-                *fm = fi.metrics;
-            }
-        }
-        return ret;
-    }
-
     uint_ptr document::get_font(const font_description& descr, font_metrics* fm)
     {
+        layout_diagnostics::scope font_profile(layout_diagnostics::font_lookup);
         if(descr.size == 0_px)
         {
             return 0;
         }
 
-        auto key = descr.hash();
-
-        auto el = m_fonts.find(key);
-
-        if(el != m_fonts.end())
+        auto el = m_fonts.lower_bound(descr);
+        if(el == m_fonts.end() || m_fonts.key_comp()(descr, el->first))
         {
-            if(fm)
-            {
-                *fm = el->second.metrics;
-            }
-            return el->second.font;
+            font_item fi = {0, {}};
+            fi.font = m_container->create_font(descr, this, &fi.metrics);
+            el = m_fonts.emplace_hint(el, descr, fi);
         }
-        return add_font(descr, fm);
+        if(fm)
+        {
+            *fm = el->second.metrics;
+        }
+        return el->second.font;
     }
 
     pixel_t document::render(pixel_t max_width, render_type rt)
     {
+        layout_diagnostics::invocation profile(this, "full");
+        if(layout_diagnostics::active) ++layout_diagnostics::active->full_calls;
         pixel_t ret = 0_px;
-        prepare_scoped_styles();
+        LH_LAYOUT_PHASE(styles, prepare_scoped_styles());
         if(m_render_tree_dirty)
         {
             rebuild_render_tree();
@@ -672,18 +668,19 @@ namespace litehtml
             if(rt == render_fixed_only)
             {
                 m_fixed_boxes.clear();
-                m_root_render->render_positioned(rt);
+                LH_LAYOUT_PHASE(positioned, m_root_render->render_positioned(rt));
             } else
             {
-                ret = m_root_render->render(0_px, 0_px, cb_context, nullptr).natural_width;
-                if(m_root_render->fetch_positioned())
+                ret = LH_LAYOUT_PHASE(flow, m_root_render->render(0_px, 0_px, cb_context, nullptr)).natural_width;
+                if(LH_LAYOUT_PHASE(positioned, m_root_render->fetch_positioned()))
                 {
                     m_fixed_boxes.clear();
-                    m_root_render->render_positioned(rt);
+                    LH_LAYOUT_PHASE(positioned, m_root_render->render_positioned(rt));
                 }
                 m_size.width  = 0;
                 m_size.height = 0;
-                m_root_render->calc_document_size(m_size);
+                LH_LAYOUT_PHASE(extent, m_root_render->calc_document_size(m_size));
+                m_flow_layout_dirty = false;
             }
         }
         return ret;
@@ -691,10 +688,12 @@ namespace litehtml
 
     pixel_t document::render_dirty(const std::shared_ptr<element>& root, pixel_t max_width, render_type rt)
     {
+        layout_diagnostics::invocation profile(this, "dirty");
         const auto pending_root = m_scoped_styles_dirty_root.lock();
-        if(!root || root == m_root || root->get_document().get() != this || m_styles_dirty || m_render_tree_dirty ||
+        if(!root || root == m_root || root->get_document().get() != this || m_styles_dirty || m_render_tree_dirty || m_flow_layout_dirty ||
            !pending_root || pending_root != root)
         {
+            if(layout_diagnostics::active) layout_diagnostics::active->fallback = m_render_tree_dirty ? "treeDirty" : (m_flow_layout_dirty ? "flowDirty" : (m_styles_dirty ? "styleDirty" : "rootOrTopology"));
             return render(max_width, rt);
         }
 
@@ -717,6 +716,7 @@ namespace litehtml
         if(!is_out_of_flow_positioned(*root) && !containment_hit)
         {
             if(containment_candidate) ++m_style_invalidation_stats.containment_fallback_count;
+            if(layout_diagnostics::active) layout_diagnostics::active->fallback = m_render_tree_dirty ? "treeDirty" : (m_styles_dirty ? "styleDirty" : "rootOrTopology");
             return render(max_width, rt);
         }
         if(containment_hit) ++m_style_invalidation_stats.containment_hit_count;
@@ -732,6 +732,7 @@ namespace litehtml
             // A changed render-item kind or positioning mode requires rebuilding
             // the render tree before the normal document render.
             m_render_tree_dirty = true;
+            if(layout_diagnostics::active) layout_diagnostics::active->fallback = m_render_tree_dirty ? "treeDirty" : (m_styles_dirty ? "styleDirty" : "rootOrTopology");
             return render(max_width, rt);
         }
         if(!layout_changed)
@@ -740,9 +741,7 @@ namespace litehtml
             return 0_px;
         }
         ++m_style_invalidation_stats.geometry_cache_miss_count;
-        std::vector<style_topology_entry> layout_nodes;
-        collect_style_topology(layout_root, layout_nodes);
-        m_style_invalidation_stats.layout_visited_elements += layout_nodes.size();
+        m_style_invalidation_stats.layout_visited_elements += count_style_nodes(layout_root);
 
         position viewport;
         m_container->get_viewport(viewport);
@@ -754,14 +753,14 @@ namespace litehtml
         const auto placement = item->pos();
         const auto result = item->render(placement.x - item->content_offset_left(),
                                          placement.y - item->content_offset_top(), cb_context, nullptr);
-        if(m_root_render->fetch_positioned())
+        if(LH_LAYOUT_PHASE(positioned, m_root_render->fetch_positioned()))
         {
             m_fixed_boxes.clear();
-            m_root_render->render_positioned(rt);
+            LH_LAYOUT_PHASE(positioned, m_root_render->render_positioned(rt));
         }
         m_size.width = 0;
         m_size.height = 0;
-        m_root_render->calc_document_size(m_size);
+        LH_LAYOUT_PHASE(extent, m_root_render->calc_document_size(m_size));
         return result.natural_width;
     }
 
@@ -976,10 +975,25 @@ namespace litehtml
         const auto started = std::chrono::steady_clock::now();
         std::vector<style_topology_entry> before;
         std::vector<style_topology_entry> after;
-        collect_style_topology(root, before);
+        // A structural mutation has already committed us to rebuilding the tree.
+        // In that case neither topology snapshot can change the decision. Keep
+        // only the pre-match node count needed by diagnostics. A clean tree (or
+        // an explicit geometry query) still needs the full comparison.
+        const bool compare_topology = !m_render_tree_dirty || layout_changed != nullptr;
+        size_t element_count;
+        if(compare_topology)
+        {
+            LH_LAYOUT_PHASE(topology, collect_style_topology(root, before, layout_changed != nullptr));
+            element_count = before.size();
+            if(layout_diagnostics::active) ++layout_diagnostics::active->topology_snapshots;
+        } else
+        {
+            element_count = LH_LAYOUT_PHASE(topology, count_style_nodes(root));
+        }
 
         if(match_selectors)
         {
+            layout_diagnostics::scope matching_profile(layout_diagnostics::matching);
             root->invalidate_selector_cache();
             root->reset_matched_styles();
             root->apply_stylesheet(m_master_css);
@@ -995,9 +1009,13 @@ namespace litehtml
             // set and only rebuild declarations/computed values.
             root->refresh_styles();
         }
-        root->compute_styles();
+        LH_LAYOUT_PHASE(compute, root->compute_styles());
 
-        collect_style_topology(root, after);
+        if(compare_topology)
+        {
+            LH_LAYOUT_PHASE(topology, collect_style_topology(root, after, layout_changed != nullptr));
+            if(layout_diagnostics::active) ++layout_diagnostics::active->topology_snapshots;
+        }
         bool topology_changed = before.size() != after.size();
         bool geometry_changed = topology_changed;
         for(size_t i = 0; !topology_changed && i < before.size(); ++i)
@@ -1017,14 +1035,16 @@ namespace litehtml
         if(match_selectors)
         {
             ++m_style_invalidation_stats.subtree_match_count;
-            m_style_invalidation_stats.subtree_match_elements += before.size();
+            m_style_invalidation_stats.subtree_match_elements += element_count;
             m_style_invalidation_stats.subtree_match_ns += elapsed;
         } else
         {
             ++m_style_invalidation_stats.computed_refresh_count;
-            m_style_invalidation_stats.computed_refresh_elements += before.size();
+            m_style_invalidation_stats.computed_refresh_elements += element_count;
             m_style_invalidation_stats.computed_refresh_ns += elapsed;
         }
+        // Counts new fallback decisions from comparison, not rebuilds that were
+        // already required before this refresh.
         if(topology_changed) ++m_style_invalidation_stats.render_tree_fallback_count;
         return topology_changed;
     }
@@ -1070,8 +1090,7 @@ namespace litehtml
         m_scoped_styles_dirty_root.reset();
         if(!m_root) return;
         const auto started = std::chrono::steady_clock::now();
-        std::vector<style_topology_entry> elements;
-        collect_style_topology(m_root, elements);
+        const auto element_count = count_style_nodes(m_root);
 
         // Rebuild selector state from the complete stylesheets. refresh_styles()
         // only revisits selectors that matched at least partially before the
@@ -1083,9 +1102,9 @@ namespace litehtml
         m_suppress_stylesheet_collection = false;
         m_root->apply_stylesheet(m_styles);
         m_root->apply_stylesheet(m_user_css);
-        m_root->compute_styles();
+        LH_LAYOUT_PHASE(compute, m_root->compute_styles());
         ++m_style_invalidation_stats.full_match_count;
-        m_style_invalidation_stats.full_match_elements += elements.size();
+        m_style_invalidation_stats.full_match_elements += element_count;
         m_style_invalidation_stats.full_match_ns +=
             static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                       std::chrono::steady_clock::now() - started)
@@ -1141,7 +1160,7 @@ namespace litehtml
         m_suppress_stylesheet_collection = false;
         m_root->apply_stylesheet(m_styles);
         m_root->apply_stylesheet(m_user_css);
-        m_root->compute_styles();
+        LH_LAYOUT_PHASE(compute, m_root->compute_styles());
     }
 
     void document::prepare_scoped_styles()
@@ -1169,11 +1188,11 @@ namespace litehtml
 
         // display can change, so the old tree may lack newly visible items.
         m_tabular_elements.clear();
-        m_root_render = m_root->create_render_item(nullptr);
-        fix_tables_layout();
+        LH_LAYOUT_PHASE(tree_create, m_root_render = m_root->create_render_item(nullptr));
+        LH_LAYOUT_PHASE(table_fix, fix_tables_layout());
         if(m_root_render)
         {
-            m_root_render = m_root_render->init();
+            LH_LAYOUT_PHASE(tree_init, m_root_render = m_root_render->init());
         }
     }
 
@@ -1504,17 +1523,17 @@ namespace litehtml
         if(update_media_lists(m_media))
         {
             m_root->refresh_styles();
-            m_root->compute_styles();
+            LH_LAYOUT_PHASE(compute, m_root->compute_styles());
             // The set of rendered elements can change across a media breakpoint
             // (e.g. display:none <-> block on responsive nav/hero blocks). The render
             // tree is built once in createFromString() from the computed display values,
             // so rebuild it here to add/remove render items for elements whose display
             // just changed; otherwise a newly-shown element keeps no render item and
             // never lays out (it collapses to zero).
-            m_root_render = m_root->create_render_item(nullptr);
+            LH_LAYOUT_PHASE(tree_create, m_root_render = m_root->create_render_item(nullptr));
             if(m_root_render)
             {
-                m_root_render = m_root_render->init();
+                LH_LAYOUT_PHASE(tree_init, m_root_render = m_root_render->init());
             }
             return true;
         }
@@ -1535,7 +1554,7 @@ namespace litehtml
                 m_culture.clear();
             }
             m_root->refresh_styles();
-            m_root->compute_styles();
+            LH_LAYOUT_PHASE(compute, m_root->compute_styles());
             return true;
         }
         return false;
@@ -1751,6 +1770,61 @@ namespace litehtml
         }
     }
 
+    void document::invalidate_id_index()
+    {
+        m_id_index_valid = false;
+        // Release expired weak references as soon as the tree changes, not only
+        // on the next query: weak_ptr also retains make_shared's allocation.
+        m_id_index.clear();
+    }
+
+    std::shared_ptr<element> document::get_element_by_id(const char* id)
+    {
+        if(!id || !m_root) return nullptr;
+        if(!m_id_index_valid)
+        {
+            auto visit = [&](auto&& self, const element::ptr& node) -> void {
+                if(const char* value = node->get_attr("id")) m_id_index.emplace(value, node);
+                for(const auto& child : node->children()) self(self, child);
+            };
+            visit(visit, m_root);
+            m_id_index_valid = true;
+        }
+        const auto found = m_id_index.find(id);
+        return found == m_id_index.end() ? nullptr : found->second.lock();
+    }
+
+    void document::invalidate_tag_index()
+    {
+        m_tag_index_valid = false;
+        // Drop weak references promptly, including their retained control blocks.
+        m_tag_index.clear();
+    }
+
+    void document::invalidate_dom_indexes()
+    {
+        invalidate_id_index();
+        invalidate_tag_index();
+    }
+
+    const std::vector<std::weak_ptr<element>>& document::get_elements_by_tag(const char* tag)
+    {
+        static const std::vector<std::weak_ptr<element>> empty;
+        if(!tag || !m_root) return empty;
+        if(!m_tag_index_valid)
+        {
+            auto visit = [&](auto&& self, const element::ptr& node) -> void {
+                if(const char* name = node->get_tagName()) m_tag_index[lowcase(name)].emplace_back(node);
+                for(const auto& child : node->children()) self(self, child);
+            };
+            visit(visit, m_root);
+            m_tag_index_valid = true;
+        }
+        // Unknown queries never grow the cache; only tags in the DOM are indexed.
+        const auto found = m_tag_index.find(lowcase(tag));
+        return found == m_tag_index.end() ? empty : found->second;
+    }
+
     void document::append_children_from_string(element& parent, const char* str, bool replace_existing)
     {
         // parent must belong to this document
@@ -1767,7 +1841,7 @@ namespace litehtml
         GumboOutput* output = gumbo_parse_with_options(&opts, str, strlen(str));
 
         // Create litehtml::elements.
-        elements_list child_elements;
+        std::vector<element::ptr> child_elements;
         // Create elements excluding the root node
         create_node(output->root, child_elements, true, false);
 
@@ -1788,6 +1862,36 @@ namespace litehtml
         }
     }
 
+    bool document::try_replace_equal_size_numeric_text(const element::ptr& parent, const char* str)
+    {
+        auto numeric = [](const std::string& text) {
+            return !text.empty() && text.size() <= 32 &&
+                text.find_first_not_of("0123456789") == std::string::npos;
+        };
+        if(!parent || !str || !numeric(str) || !m_finalized || !is_connected(parent) ||
+           m_styles_dirty || m_render_tree_dirty || m_flow_layout_dirty || m_author_stylesheets_dirty ||
+           !m_scoped_styles_dirty_root.expired() || parent->children().size() != 1) return false;
+        const auto old = std::dynamic_pointer_cast<el_text>(parent->children().front());
+        std::string old_value;
+        if(!old) return false;
+        old->get_text(old_value);
+        if(!numeric(old_value)) return false;
+        const auto item = old->get_render_item();
+        const auto parent_item = parent->get_render_item();
+        if(!item || !parent_item || parent_item->children().size() != 1 ||
+           parent_item->children().front() != item || !item->text_override().empty()) return false;
+        auto replacement = std::make_shared<el_text>(str, shared_from_this());
+        replacement->parent(parent);
+        replacement->compute_styles(false);
+        if(!old->same_measured_size(*replacement)) return false;
+        // Nonempty ASCII digits cannot alter :empty, selector topology, line breaks,
+        // or measured geometry. Preserve layout but still replace DOM node identity.
+        parent->removeChild(old);
+        parent->appendChild(replacement);
+        item->replace_equal_size_text_source(replacement);
+        return true;
+    }
+
     bool document::set_inner_html(const element::ptr& parent, const char* str)
     {
         if(!parent || !str || parent->get_document().get() != this)
@@ -1795,11 +1899,83 @@ namespace litehtml
             return false;
         }
 
+        auto has_only_nonempty_text = [](const element::ptr& node) {
+            if(node->children().empty()) return false;
+            bool has_visible_text = false;
+            for(const auto& child : node->children())
+            {
+                const auto text = std::dynamic_pointer_cast<el_text>(child);
+                if(!text) return false; // Includes generated pseudo nodes.
+                std::string value;
+                text->get_text(value);
+                has_visible_text |= value.find_first_not_of(" \t\r\n\f") != std::string::npos;
+            }
+            return has_visible_text;
+        };
+        auto has_pending_parent_styles = [&]() {
+            const auto pending = m_scoped_styles_dirty_root.lock();
+            if(!pending) return false;
+            for(auto node = parent; node; node = node->parent())
+                if(node == pending) return true;
+            return false;
+        };
+        const bool plain_text_before = has_only_nonempty_text(parent);
+        // Only retain a unique, direct text child list. Anonymous flex wrappers,
+        // split inline boxes, generated content and pending topology use rebuild.
+        std::shared_ptr<render_item> text_parent;
+        if(plain_text_before && !m_render_tree_dirty && parent->css().get_overflow() == overflow_visible)
+        {
+            auto item = parent->get_render_item();
+            if(item && parent->render_reference_count() == 1 &&
+               (std::dynamic_pointer_cast<render_item_inline>(item) ||
+                std::dynamic_pointer_cast<render_item_inline_context>(item)) &&
+               item->children().size() == parent->children().size())
+            {
+                auto rendered = item->children().begin();
+                bool direct = true;
+                for(const auto& child : parent->children())
+                {
+                    const auto& leaf = *rendered++;
+                    if(leaf->src_el() != child || leaf->parent() != item || !leaf->children().empty() ||
+                       child->render_reference_count() != 1)
+                    {
+                        direct = false;
+                        break;
+                    }
+                }
+                if(direct) text_parent = std::move(item);
+            }
+        }
         const bool stylesheet_changed = contains_author_stylesheet(parent);
         append_children_from_string(*parent, str, true);
         if(is_connected(parent) && (stylesheet_changed || contains_author_stylesheet(parent)))
         {
             invalidate_author_stylesheets();
+        } else if(parent->tag() != _title_ && plain_text_before && has_only_nonempty_text(parent) && m_finalized &&
+                  is_connected(parent) && !m_styles_dirty && !m_author_stylesheets_dirty &&
+                  !has_pending_parent_styles())
+        {
+            // Nonempty text -> nonempty text changes no element selector state.
+            // Initialize fresh text nodes from the unchanged parent styles, but
+            // still reflow geometry. Multiple label writes must not
+            // escalate selector rematching to their document-wide ancestor.
+            for(const auto& child : parent->children()) child->compute_styles(false);
+            if(text_parent)
+            {
+                // Retain the formatting parent, not old DOM identity or geometry.
+                // Full flow layout rebuilds line boxes and positioned/extent data.
+                for(const auto& leaf : text_parent->children()) leaf->src_el()->reset_styles();
+                text_parent->children().clear();
+                for(const auto& child : parent->children())
+                {
+                    auto leaf = child->create_render_item(text_parent);
+                    text_parent->add_child(leaf->init());
+                }
+                m_flow_layout_dirty = true;
+            } else
+            {
+                m_render_tree_dirty = true;
+            }
         } else
         {
             invalidate_structure_styles(parent);
@@ -1909,6 +2085,7 @@ namespace litehtml
         }
         child->parent(nullptr);
         replacement->parent(parent);
+        invalidate_dom_indexes();
         *found = replacement;
 
         if(stylesheet_changed)

@@ -1,3 +1,4 @@
+#include "layout_diagnostics.h"
 #include "render_item.h"
 #include "document.h"
 #include "document_container.h"
@@ -31,6 +32,12 @@ litehtml::rendered_width litehtml::render_item::render(pixel_t x, pixel_t y,
                                                        const containing_block_context& containing_block_size,
                                                        formatting_context* fmt_ctx, bool second_pass)
 {
+    if(auto* profile = layout_diagnostics::active)
+    {
+        ++profile->calls;
+        if(containing_block_size.size_mode & containing_block_context::size_mode_content) ++profile->content_calls;
+        if(second_pass) ++profile->second_pass_calls;
+    }
     calc_outlines(containing_block_size.width);
 
     m_pos.clear();
