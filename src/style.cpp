@@ -982,15 +982,15 @@ namespace litehtml
         }
 
         add_parsed_property(_background_color_, property_value(color, important));
-        add_parsed_property(_background_image_, property_value(images, important));
+        add_parsed_property(_background_image_, property_value(std::move(images), important));
         add_parsed_property(_background_image_baseurl_, property_value(baseurl, important));
-        add_parsed_property(_background_position_x_, property_value(x_positions, important));
-        add_parsed_property(_background_position_y_, property_value(y_positions, important));
-        add_parsed_property(_background_size_, property_value(sizes, important));
-        add_parsed_property(_background_repeat_, property_value(repeats, important));
-        add_parsed_property(_background_attachment_, property_value(attachments, important));
-        add_parsed_property(_background_origin_, property_value(origins, important));
-        add_parsed_property(_background_clip_, property_value(clips, important));
+        add_parsed_property(_background_position_x_, property_value(std::move(x_positions), important));
+        add_parsed_property(_background_position_y_, property_value(std::move(y_positions), important));
+        add_parsed_property(_background_size_, property_value(std::move(sizes), important));
+        add_parsed_property(_background_repeat_, property_value(std::move(repeats), important));
+        add_parsed_property(_background_attachment_, property_value(std::move(attachments), important));
+        add_parsed_property(_background_origin_, property_value(std::move(origins), important));
+        add_parsed_property(_background_clip_, property_value(std::move(clips), important));
     }
 
     // https://drafts.csswg.org/css-backgrounds/#typedef-bg-layer
@@ -1214,7 +1214,7 @@ namespace litehtml
             images.push_back(image);
         }
 
-        add_parsed_property(_background_image_, property_value(images, important));
+        add_parsed_property(_background_image_, property_value(std::move(images), important));
         add_parsed_property(_background_image_baseurl_, property_value(baseurl, important));
     }
 
@@ -1289,7 +1289,7 @@ namespace litehtml
             vec.push_back(idx);
         }
 
-        add_parsed_property(name, property_value(vec, important));
+        add_parsed_property(name, property_value(std::move(vec), important));
     }
 
     void style::parse_background_position(const css_token_vector& tokens, bool important)
@@ -1315,8 +1315,8 @@ namespace litehtml
             y_positions.push_back(y);
         }
 
-        add_parsed_property(_background_position_x_, property_value(x_positions, important));
-        add_parsed_property(_background_position_y_, property_value(y_positions, important));
+        add_parsed_property(_background_position_x_, property_value(std::move(x_positions), important));
+        add_parsed_property(_background_position_y_, property_value(std::move(y_positions), important));
     }
 
     void style::parse_background_size(const css_token_vector& tokens, bool important)
@@ -1341,7 +1341,7 @@ namespace litehtml
             sizes.push_back(size);
         }
 
-        add_parsed_property(_background_size_, property_value(sizes, important));
+        add_parsed_property(_background_size_, property_value(std::move(sizes), important));
     }
 
     bool parse_font_weight(const css_token& tok, css_length& weight)
@@ -1839,25 +1839,26 @@ namespace litehtml
         }
     }
 
-    void style::add_parsed_property(string_id name, const property_value& propval)
+    template <class Value>
+    void style::add_parsed_property(string_id name, Value&& propval)
     {
-        auto prop = m_properties.find(name);
-        if(prop != m_properties.end())
+        auto prop = lower_bound(name);
+        if(prop != m_properties.end() && prop->first == name)
         {
-            if(!prop->second.m_important || (propval.m_important && prop->second.m_important))
+            if(!prop->second.m_important || propval.m_important)
             {
-                prop->second = propval;
+                prop->second = std::forward<Value>(propval);
             }
         } else
         {
-            m_properties[name] = propval;
+            m_properties.emplace(prop, name, std::forward<Value>(propval));
         }
     }
 
     void style::remove_property(string_id name, bool important)
     {
-        auto prop = m_properties.find(name);
-        if(prop != m_properties.end())
+        auto prop = lower_bound(name);
+        if(prop != m_properties.end() && prop->first == name)
         {
             if(!prop->second.m_important || (important && prop->second.m_important))
             {
@@ -1868,6 +1869,7 @@ namespace litehtml
 
     void style::combine(const style& src)
     {
+        if(this == &src) return;
         for(const auto& property : src.m_properties)
         {
             add_parsed_property(property.first, property.second);
@@ -1876,8 +1878,8 @@ namespace litehtml
 
     const property_value& style::get_property(string_id name) const
     {
-        auto it = m_properties.find(name);
-        if(it != m_properties.end())
+        auto it = lower_bound(name);
+        if(it != m_properties.end() && it->first == name)
         {
             return it->second;
         }
@@ -1969,17 +1971,30 @@ namespace litehtml
 
     void style::subst_vars(const html_tag* el)
     {
-        for(auto& prop : m_properties)
+        for(size_t index = 0; index < m_properties.size();)
         {
+            auto& prop = m_properties[index];
             if(prop.second.m_has_var)
             {
-                auto& value = prop.second.get<css_token_vector>();
-                subst_vars_(prop.first, value, el);
+                const auto name = prop.first;
+                const bool important = prop.second.m_important;
+                auto& tokens = prop.second.get<css_token_vector>();
+                // Substitution only reads style properties. Preserve the old
+                // resolved token state before re-parsing can move the vector.
+                subst_vars_(name, tokens, el);
+                // Re-parsing a shorthand may insert/remove properties. Its input
+                // must remain valid even when the property vector is relocated.
+                auto value = tokens;
                 // re-adding the same property
                 // if it is a custom property it will be re-added as a css_token_vector
                 // if it is a standard css property it will be parsed and properly added as typed property
-                add_property(prop.first, value, "", prop.second.m_important, el->get_document()->container());
+                add_property(name, value, "", important, el->get_document()->container());
+                // Match the old ordered-map traversal: newly inserted higher keys
+                // are visited, lower keys and the just-processed key are not.
+                index = static_cast<size_t>(std::upper_bound(m_properties.begin(), m_properties.end(), name,
+                    [](string_id key, const auto& property) { return key < property.first; }) - m_properties.begin());
             }
+            else ++index;
         }
     }
 

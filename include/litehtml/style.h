@@ -7,6 +7,7 @@
 #include "css_tokenizer.h"
 #include "gradient.h"
 #include "web_color.h"
+#include <utility>
 
 namespace litehtml
 {
@@ -26,8 +27,8 @@ namespace litehtml
 
         property_value() = default;
         template <class T>
-        property_value(const T& val, bool important, bool has_var = false) :
-            base(val),
+        property_value(T&& val, bool important, bool has_var = false) :
+            base(std::forward<T>(val)),
             m_important(important),
             m_has_var(has_var)
         {
@@ -45,8 +46,22 @@ namespace litehtml
         using vector = std::vector<style::ptr>;
 
       private:
-        props_map                              m_properties;
+        // Sorted contiguous storage avoids a separate tree allocation per property.
+        // References returned by get_property are only valid until this style mutates.
+        using properties = std::vector<std::pair<string_id, property_value>>;
+        properties m_properties;
         static std::map<string_id, css_values> m_valid_values;
+
+        properties::iterator lower_bound(string_id name)
+        {
+            return std::lower_bound(m_properties.begin(), m_properties.end(), name,
+                [](const auto& property, string_id key) { return property.first < key; });
+        }
+        properties::const_iterator lower_bound(string_id name) const
+        {
+            return std::lower_bound(m_properties.begin(), m_properties.end(), name,
+                [](const auto& property, string_id key) { return property.first < key; });
+        }
 
       public:
         void add(const css_token_vector& tokens, const std::string& baseurl = "",
@@ -110,7 +125,7 @@ namespace litehtml
         void parse_flex(const css_token_vector& tokens, bool important);
         void parse_align_self(string_id name, const css_token_vector& tokens, bool important);
 
-        void add_parsed_property(string_id name, const property_value& propval);
+        template <class Value> void add_parsed_property(string_id name, Value&& propval);
         void add_length_property(string_id name, const css_token& val, const css_values& keywords, int options,
                                  bool important);
         template <class T> void add_four_properties(string_id top_name, T val[4], int n, bool important);

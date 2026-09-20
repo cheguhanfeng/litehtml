@@ -541,13 +541,23 @@ void litehtml::css_properties::compute_background(const html_tag* el, const docu
 {
     m_bg.m_color = get_color_property(el, _background_color_, false, web_color::transparent, offset(m_bg.m_color));
 
-    const css_size auto_auto(css_length::predef_value(background_size_auto),
-                             css_length::predef_value(background_size_auto));
+    // background::get_layer already interprets empty property vectors as their
+    // CSS defaults (0% position, auto size, scroll/repeat/border/padding boxes).
+    // Preserve that representation instead of allocating seven single-value
+    // arrays in every computed style. Explicit/inherited nondefault arrays still
+    // own their copies before conversion. Keep the image-none layer unchanged.
+    static const length_vector default_position;
+    static const size_vector default_size;
+    static const int_vector default_attachment;
+    static const int_vector default_repeat;
+    static const int_vector default_clip;
+    static const int_vector default_origin;
+    static const std::vector<image> default_image{image()};
     m_bg.m_position_x = el->get_property<length_vector>(
-        _background_position_x_, false, {css_length(0, css_units_percentage)}, offset(m_bg.m_position_x));
+        _background_position_x_, false, default_position, offset(m_bg.m_position_x));
     m_bg.m_position_y = el->get_property<length_vector>(
-        _background_position_y_, false, {css_length(0, css_units_percentage)}, offset(m_bg.m_position_y));
-    m_bg.m_size = el->get_property<size_vector>(_background_size_, false, {auto_auto}, offset(m_bg.m_size));
+        _background_position_y_, false, default_position, offset(m_bg.m_position_y));
+    m_bg.m_size = el->get_property<size_vector>(_background_size_, false, default_size, offset(m_bg.m_size));
 
     for(auto& x : m_bg.m_position_x)
     {
@@ -563,15 +573,15 @@ void litehtml::css_properties::compute_background(const html_tag* el, const docu
         doc->cvt_units(size.height, m_font_metrics, 0_px);
     }
 
-    m_bg.m_attachment = el->get_property<int_vector>(_background_attachment_, false, {background_attachment_scroll},
+    m_bg.m_attachment = el->get_property<int_vector>(_background_attachment_, false, default_attachment,
                                                      offset(m_bg.m_attachment));
     m_bg.m_repeat =
-        el->get_property<int_vector>(_background_repeat_, false, {background_repeat_repeat}, offset(m_bg.m_repeat));
-    m_bg.m_clip = el->get_property<int_vector>(_background_clip_, false, {background_box_border}, offset(m_bg.m_clip));
+        el->get_property<int_vector>(_background_repeat_, false, default_repeat, offset(m_bg.m_repeat));
+    m_bg.m_clip = el->get_property<int_vector>(_background_clip_, false, default_clip, offset(m_bg.m_clip));
     m_bg.m_origin =
-        el->get_property<int_vector>(_background_origin_, false, {background_box_padding}, offset(m_bg.m_origin));
+        el->get_property<int_vector>(_background_origin_, false, default_origin, offset(m_bg.m_origin));
 
-    m_bg.m_image   = el->get_property<std::vector<image>>(_background_image_, false, {image()}, offset(m_bg.m_image));
+    m_bg.m_image   = el->get_property<std::vector<image>>(_background_image_, false, default_image, offset(m_bg.m_image));
     m_bg.m_baseurl = el->get_property<std::string>(_background_image_baseurl_, false, "", offset(m_bg.m_baseurl));
 
     for(auto& image : m_bg.m_image)
