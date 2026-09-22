@@ -1,5 +1,6 @@
 #pragma once
 
+#include "single_pass_profile.h"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -25,13 +26,19 @@ namespace litehtml::layout_diagnostics
     {
         return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start).count());
     }
+    inline const char* phase_name(phase value)
+    {
+        static const char* names[] = {"styles", "matching", "compute", "topology", "treeCreate", "treeInit", "tableFix", "flow", "positioned", "extent", "fontLookup", "parallelSnapshot", "parallelWait", "parallelCommit"};
+        return names[value];
+    }
     class scope
     {
+        lh_single_profile::scope trace;
         sample* target;
         phase slot;
         clock::time_point start;
     public:
-        explicit scope(phase value) : target(active), slot(value), start(target ? clock::now() : clock::time_point{}) {}
+        explicit scope(phase value) : trace("layout", phase_name(value)), target(active), slot(value), start(target ? clock::now() : clock::time_point{}) {}
         ~scope() { if(target) target->ns[slot] += elapsed(start); }
     };
     template<class F> decltype(auto) run(phase value, F&& fn)

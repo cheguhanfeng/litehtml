@@ -181,7 +181,7 @@ namespace litehtml
         document::ptr doc = std::make_shared<document>(container);
 
         // Parse document into GumboOutput
-        GumboOutput* output = doc->parse_html(str);
+        GumboOutput* output = lh_single_profile::run("parse", "documentParse", [&] { return doc->parse_html(str); });
 
         // mode must be set before doc->create_node because it is used in html_tag::set_attr
         switch(output->document->v.document.doc_type_quirks_mode)
@@ -199,7 +199,7 @@ namespace litehtml
 
         // Create litehtml::elements.
         std::vector<element::ptr> root_elements;
-        doc->create_node(output->root, root_elements, true, true);
+        lh_single_profile::run("parse", "documentDomCreate", [&] { doc->create_node(output->root, root_elements, true, true); });
         element::ptr root;
         if(!root_elements.empty())
         {
@@ -751,8 +751,8 @@ namespace litehtml
         cb_context.height = viewport.height;
         cb_context.height.type = containing_block_context::cbc_value_type_absolute;
         const auto placement = item->pos();
-        const auto result = item->render(placement.x - item->content_offset_left(),
-                                         placement.y - item->content_offset_top(), cb_context, nullptr);
+        const auto result = LH_LAYOUT_PHASE(flow, item->render(placement.x - item->content_offset_left(),
+                                         placement.y - item->content_offset_top(), cb_context, nullptr));
         if(LH_LAYOUT_PHASE(positioned, m_root_render->fetch_positioned()))
         {
             m_fixed_boxes.clear();
@@ -971,6 +971,7 @@ namespace litehtml
 
     bool document::rematch_styles(const std::shared_ptr<element>& root, bool match_selectors, bool* layout_changed)
     {
+        lh_single_profile::scope trace("layout", "styles");
         if(!root) return false;
         const auto started = std::chrono::steady_clock::now();
         std::vector<style_topology_entry> before;
@@ -1838,19 +1839,19 @@ namespace litehtml
         // Although Gumbo always creates html tag anyway. We have to ignore it in create_node.
         opts.fragment_context = GUMBO_TAG_BODY;
         // parse document into GumboOutput
-        GumboOutput* output = gumbo_parse_with_options(&opts, str, strlen(str));
+        GumboOutput* output = lh_single_profile::run("parse", "gumboFragment", [&] { return gumbo_parse_with_options(&opts, str, strlen(str)); });
 
         // Create litehtml::elements.
         std::vector<element::ptr> child_elements;
         // Create elements excluding the root node
-        create_node(output->root, child_elements, true, false);
+        lh_single_profile::run("parse", "domCreate", [&] { create_node(output->root, child_elements, true, false); });
 
         // Destroy GumboOutput
-        gumbo_destroy_output(&kGumboDefaultOptions, output);
+        lh_single_profile::run("parse", "gumboDestroy", [&] { gumbo_destroy_output(&kGumboDefaultOptions, output); });
 
         if(replace_existing)
         {
-            parent.clearRecursive();
+            lh_single_profile::run("parse", "domDetach", [&] { parent.clearRecursive(); });
         }
 
         // Attach the parsed DOM only. The mutation invalidation path below
@@ -1959,7 +1960,7 @@ namespace litehtml
             // Initialize fresh text nodes from the unchanged parent styles, but
             // still reflow geometry. Multiple label writes must not
             // escalate selector rematching to their document-wide ancestor.
-            for(const auto& child : parent->children()) child->compute_styles(false);
+            LH_LAYOUT_PHASE(compute, ([&] { for(const auto& child : parent->children()) child->compute_styles(false); })());
             if(text_parent)
             {
                 // Retain the formatting parent, not old DOM identity or geometry.

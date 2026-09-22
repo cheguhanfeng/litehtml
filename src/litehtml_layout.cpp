@@ -6,6 +6,7 @@
 // 线程约定：本实现非线程安全，应由宿主单线程串行使用。
 
 #include "litehtml_layout.h"
+#include "single_pass_profile.h"
 
 #include "document.h"
 #include "html_tag.h"
@@ -688,6 +689,7 @@ namespace
 
 LITEHTML_API litehtml_layout_service* litehtml_layout_create(const litehtml_layout_callbacks* cb)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_create");
     if(!cb)
     {
         return nullptr;
@@ -698,13 +700,16 @@ LITEHTML_API litehtml_layout_service* litehtml_layout_create(const litehtml_layo
 
 LITEHTML_API void litehtml_layout_destroy(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_destroy");
     delete service;
+    lh_single_profile::flush();
 }
 
 #if defined(LITEHTML_ENABLE_STYLE_DIAGNOSTICS)
 LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
     const litehtml_layout_service* service, litehtml_style_invalidation_stats* out_stats)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_style_invalidation_stats");
     if(!out_stats) return;
     *out_stats = {};
     if(!service || !service->doc) return;
@@ -728,17 +733,20 @@ LITEHTML_API void litehtml_layout_get_style_invalidation_stats(
 
 LITEHTML_API void litehtml_layout_reset_style_invalidation_stats(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_reset_style_invalidation_stats");
     if(service && service->doc) service->doc->reset_style_stats();
 }
 
 LITEHTML_API void litehtml_layout_set_selector_index_enabled(int enabled)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_set_selector_index_enabled");
     litehtml::css::set_selector_index_enabled(enabled != 0);
 }
 
 LITEHTML_API int litehtml_layout_get_selector_index_stats(
     const litehtml_layout_service* service, litehtml_selector_index_stats* out_stats)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_selector_index_stats");
     if(!out_stats) return 0;
     *out_stats = {};
     if(!service || !service->doc) return 0;
@@ -754,12 +762,14 @@ LITEHTML_API int litehtml_layout_get_selector_index_stats(
 
 LITEHTML_API void litehtml_layout_set_selector_cache_mode(int mode)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_set_selector_cache_mode");
     litehtml::html_tag::set_selector_cache_mode(mode);
 }
 
 LITEHTML_API int litehtml_layout_get_selector_cache_stats(
     const litehtml_layout_service* service, litehtml_selector_cache_stats* out_stats)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_selector_cache_stats");
     if(!out_stats) return 0;
     *out_stats = {};
     if(!service || !service->doc) return 0;
@@ -776,6 +786,7 @@ LITEHTML_API int litehtml_layout_get_selector_cache_stats(
 
 LITEHTML_API int litehtml_layout_benchmark_refresh_selector_matches(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_benchmark_refresh_selector_matches");
     if(!service || !service->doc) return 0;
     service->doc->benchmark_refresh_selector_matches();
     return 1;
@@ -788,6 +799,7 @@ LITEHTML_API int litehtml_layout_load_html(litehtml_layout_service* service,
                                            float viewport_width,
                                            float viewport_height)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_load_html");
     if(!service || !html || !std::isfinite(viewport_width) || !std::isfinite(viewport_height) ||
        viewport_width <= 0.f || viewport_height <= 0.f)
     {
@@ -824,6 +836,7 @@ LITEHTML_API int litehtml_layout_set_viewport(litehtml_layout_service* service,
                                               float viewport_width,
                                               float viewport_height)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_set_viewport");
     if(!service || !std::isfinite(viewport_width) || !std::isfinite(viewport_height) || viewport_width <= 0.f ||
        viewport_height <= 0.f)
     {
@@ -848,6 +861,7 @@ LITEHTML_API int litehtml_layout_render(litehtml_layout_service* service,
                                         float max_width,
                                         int render_type)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_render");
     if(!service || !service->doc || !IsValidRenderType(render_type) ||
        (render_type == litehtml_render_fixed_only && !service->has_rendered))
     {
@@ -867,6 +881,7 @@ LITEHTML_API int litehtml_layout_render_dirty(litehtml_layout_service* service,
                                               float max_width,
                                               int render_type)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_render_dirty");
     if(!service || !service->doc || !IsCurrentElement(changed_root) || changed_root->service != service ||
        !IsValidRenderType(render_type) || (render_type == litehtml_render_fixed_only && !service->has_rendered))
     {
@@ -882,6 +897,7 @@ LITEHTML_API int litehtml_layout_render_dirty(litehtml_layout_service* service,
 
 LITEHTML_API void litehtml_layout_draw(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_draw");
     if(!service || !service->doc || !service->has_rendered)
     {
         return;
@@ -907,6 +923,7 @@ namespace
 
 LITEHTML_API void litehtml_layout_set_scroll(litehtml_layout_service* service, float x, float y)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_set_scroll");
     if(!service) return;
     service->scroll_x = x;
     service->scroll_y = y;
@@ -915,6 +932,7 @@ LITEHTML_API void litehtml_layout_set_scroll(litehtml_layout_service* service, f
 
 LITEHTML_API void litehtml_layout_scroll_by(litehtml_layout_service* service, float dx, float dy)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_scroll_by");
     if(!service) return;
     service->scroll_x += dx;
     service->scroll_y += dy;
@@ -927,6 +945,7 @@ LITEHTML_API int litehtml_layout_on_scroll(litehtml_layout_service* service,
                                            float x,
                                            float y)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_on_scroll");
     if(!service || !service->doc || !service->has_rendered || (dx == 0.f && dy == 0.f)) return 0;
     const auto point  = DocumentPoint(service, x, y);
     const auto nested = service->doc->on_scroll(dx, dy, point.x, point.y, x, y);
@@ -946,6 +965,7 @@ LITEHTML_API int litehtml_layout_on_scroll(litehtml_layout_service* service,
 
 LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, litehtml_layout_element* element)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_scroll_to");
     if(!service || !service->has_rendered || !IsCurrentElement(element) || element->service != service) return;
     const auto placement = element->element->get_placement();
     service->scroll_y = static_cast<float>(placement.y);
@@ -954,17 +974,20 @@ LITEHTML_API void litehtml_layout_scroll_to(litehtml_layout_service* service, li
 
 LITEHTML_API float litehtml_layout_get_scroll_x(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_scroll_x");
     return service ? service->scroll_x : 0.f;
 }
 
 LITEHTML_API float litehtml_layout_get_scroll_y(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_scroll_y");
     return service ? service->scroll_y : 0.f;
 }
 
 LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* service,
                                                    litehtml_size* size)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_content_size");
     if(!service || !service->doc || !size)
     {
         return;
@@ -975,6 +998,7 @@ LITEHTML_API void litehtml_layout_get_content_size(litehtml_layout_service* serv
 
 LITEHTML_API int litehtml_layout_get_script_count(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_script_count");
     if(!service || !service->doc) return 0;
     std::vector<const litehtml::el_script*> scripts;
     CollectScripts(service->doc->root(), scripts);
@@ -983,6 +1007,7 @@ LITEHTML_API int litehtml_layout_get_script_count(litehtml_layout_service* servi
 
 LITEHTML_API const char* litehtml_layout_get_script(litehtml_layout_service* service, int index)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_script");
     if(!service || !service->doc || index < 0) return nullptr;
     std::vector<const litehtml::el_script*> scripts;
     CollectScripts(service->doc->root(), scripts);
@@ -991,6 +1016,7 @@ LITEHTML_API const char* litehtml_layout_get_script(litehtml_layout_service* ser
 
 LITEHTML_API const char* litehtml_layout_get_script_src(litehtml_layout_service* service, int index)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_script_src");
     if(!service || !service->doc || index < 0) return nullptr;
     std::vector<const litehtml::el_script*> scripts;
     CollectScripts(service->doc->root(), scripts);
@@ -999,31 +1025,37 @@ LITEHTML_API const char* litehtml_layout_get_script_src(litehtml_layout_service*
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_id(litehtml_layout_service* service, const char* id)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_element_by_id");
     if(!service || !service->doc || !id) return nullptr;
     return MakeElementHandle(service, service->doc->get_element_by_id(id));
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_query_selector(litehtml_layout_service* service, const char* selector)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_query_selector");
     if(!service || !service->doc || !selector) return nullptr;
     return MakeElementHandle(service, service->doc->root()->select_one(selector));
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_create_element(litehtml_layout_service* service, const char* tag)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_create_element");
     if(!service || !service->doc || !tag) return nullptr;
     return MakeElementHandle(service, service->doc->create_element(tag, {}));
 }
 
-LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* element) { delete element; }
+LITEHTML_API void litehtml_layout_element_destroy(litehtml_layout_element* element) {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_destroy"); delete element; }
 
 LITEHTML_API const char* litehtml_layout_element_get_attribute(const litehtml_layout_element* element, const char* name)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_attribute");
     return IsCurrentElement(element) && name ? element->element->get_attr(name) : nullptr;
 }
 
 LITEHTML_API int litehtml_layout_element_get_attribute_count(const litehtml_layout_element* element)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_attribute_count");
     if(!IsCurrentElement(element)) return 0;
     const auto tag = std::dynamic_pointer_cast<litehtml::html_tag>(element->element);
     return tag ? static_cast<int>(tag->attributes().size()) : 0;
@@ -1031,6 +1063,7 @@ LITEHTML_API int litehtml_layout_element_get_attribute_count(const litehtml_layo
 
 LITEHTML_API const char* litehtml_layout_element_get_attribute_name(const litehtml_layout_element* element, int index)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_attribute_name");
     if(!IsCurrentElement(element) || index < 0) return nullptr;
     const auto tag = std::dynamic_pointer_cast<litehtml::html_tag>(element->element);
     if(!tag || index >= static_cast<int>(tag->attributes().size())) return nullptr;
@@ -1041,6 +1074,7 @@ LITEHTML_API const char* litehtml_layout_element_get_attribute_name(const liteht
 
 LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* element, const char* name, const char* value)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_set_attribute");
     if(!IsCurrentElement(element) || !name || !value) return 0;
     element->element->set_attr(name, value);
     return 1;
@@ -1048,6 +1082,7 @@ LITEHTML_API int litehtml_layout_element_set_attribute(litehtml_layout_element* 
 
 LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_element* element, const char* name)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_remove_attribute");
     if(!IsCurrentElement(element) || !name) return 0;
     // litehtml models attributes as strings.  Erasing the source attribute is
     // important for HTML boolean attributes: checked="false" is still checked.
@@ -1057,6 +1092,7 @@ LITEHTML_API int litehtml_layout_element_remove_attribute(litehtml_layout_elemen
 
 LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_element* element)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_text");
     if(!IsCurrentElement(element)) return nullptr;
     element->text_cache.clear();
     element->element->get_text(element->text_cache);
@@ -1065,21 +1101,25 @@ LITEHTML_API const char* litehtml_layout_element_get_text(const litehtml_layout_
 
 LITEHTML_API uint64_t litehtml_layout_element_get_node_id(const litehtml_layout_element* element)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_node_id");
     return IsCurrentElement(element) ? GetNodeId(element->service, element->element) : 0;
 }
 
 LITEHTML_API const char* litehtml_layout_element_get_tag_name(const litehtml_layout_element* element)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_tag_name");
     return IsCurrentElement(element) ? element->element->get_tagName() : nullptr;
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const litehtml_layout_element* element)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_parent");
     return IsCurrentElement(element) ? MakeElementHandle(element->service, element->element->parent()) : nullptr;
 }
 
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_placement");
     if(!IsCurrentElement(element) || !element->service->has_rendered || !out_rect) return 0;
     const auto placement = element->element->get_placement();
     out_rect->x = placement.x;
@@ -1091,23 +1131,27 @@ LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_ele
 
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_set_inner_html");
     if(!IsCurrentElement(element) || !html) return 0;
     return element->service->doc->set_inner_html(element->element, html) ? 1 : 0;
 }
 
 LITEHTML_API int litehtml_layout_element_try_replace_numeric_text(litehtml_layout_element* element, const char* text)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_try_replace_numeric_text");
     if(!IsCurrentElement(element) || !text) return 0;
     return element->service->doc->try_replace_equal_size_numeric_text(element->element, text) ? 1 : 0;
 }
 
 LITEHTML_API uint64_t litehtml_layout_get_node_identity_entry_count(const litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_node_identity_entry_count");
     return service ? static_cast<uint64_t>(service->node_ids.size()) : 0;
 }
 
 LITEHTML_API uint64_t litehtml_layout_get_render_reference_count(const litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_render_reference_count");
     if(!service || !service->doc || !service->doc->root()) return 0;
     uint64_t count = 0;
     std::vector<litehtml::element::ptr> pending{service->doc->root()};
@@ -1122,12 +1166,14 @@ LITEHTML_API uint64_t litehtml_layout_get_render_reference_count(const litehtml_
 
 LITEHTML_API int litehtml_layout_element_append_child(litehtml_layout_element* parent, litehtml_layout_element* child)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_append_child");
     if(!IsCurrentElement(parent) || !IsCurrentElement(child) || parent->service != child->service) return 0;
     return parent->service->doc->append_child(parent->element, child->element) ? 1 : 0;
 }
 
 LITEHTML_API int litehtml_layout_element_get_child_count(const litehtml_layout_element* parent)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_child_count");
     if(!IsCurrentElement(parent)) return 0;
     int count = 0;
     for(const auto& child : parent->element->children()) if(child && child->get_tagName()) ++count;
@@ -1136,6 +1182,7 @@ LITEHTML_API int litehtml_layout_element_get_child_count(const litehtml_layout_e
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_child(const litehtml_layout_element* parent, int index)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_get_child");
     if(!IsCurrentElement(parent) || index < 0) return nullptr;
     for(const auto& child : parent->element->children())
     {
@@ -1147,12 +1194,14 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_child(const li
 
 LITEHTML_API int litehtml_layout_element_remove_child(litehtml_layout_element* parent, litehtml_layout_element* child)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_remove_child");
     if(!IsCurrentElement(parent) || !IsCurrentElement(child) || parent->service != child->service) return 0;
     return parent->service->doc->remove_child(parent->element, child->element) ? 1 : 0;
 }
 
 LITEHTML_API int litehtml_layout_element_replace_child(litehtml_layout_element* parent, litehtml_layout_element* replacement, litehtml_layout_element* child)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_replace_child");
     if(!IsCurrentElement(parent) || !IsCurrentElement(replacement) || !IsCurrentElement(child) ||
        parent->service != replacement->service || parent->service != child->service) return 0;
     return parent->service->doc->replace_child(parent->element, replacement->element, child->element) ? 1 : 0;
@@ -1160,12 +1209,14 @@ LITEHTML_API int litehtml_layout_element_replace_child(litehtml_layout_element* 
 
 LITEHTML_API int litehtml_layout_get_elements_by_tag_count(litehtml_layout_service* service, const char* tag)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_elements_by_tag_count");
     if(!service || !service->doc || !tag) return 0;
     return static_cast<int>(service->doc->get_elements_by_tag(tag).size());
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_get_element_by_tag(litehtml_layout_service* service, const char* tag, int index)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_get_element_by_tag");
     if(!service || !service->doc || !tag || index < 0) return nullptr;
     const auto& elements = service->doc->get_elements_by_tag(tag);
     return index < static_cast<int>(elements.size()) ? MakeElementHandle(service, elements[index].lock()) : nullptr;
@@ -1191,6 +1242,7 @@ namespace
 
 LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service, float x, float y)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_on_mouse_move");
     if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
     return service->doc->on_mouse_over(point.x, point.y, x, y, IgnoreRedrawBox)
@@ -1200,6 +1252,7 @@ LITEHTML_API int litehtml_layout_on_mouse_move(litehtml_layout_service* service,
 
 LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service, float x, float y)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_on_mouse_down");
     if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
     return service->doc->on_lbutton_down(point.x, point.y, x, y, IgnoreRedrawBox)
@@ -1209,11 +1262,13 @@ LITEHTML_API int litehtml_layout_on_mouse_down(litehtml_layout_service* service,
 
 LITEHTML_API int litehtml_layout_on_mouse_up(litehtml_layout_service* service, float x, float y)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_on_mouse_up");
 	return litehtml_layout_on_mouse_up_ex(service, x, y, 1);
 }
 
 LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service, float x, float y, int activate_default)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_on_mouse_up_ex");
     if(!service || !service->doc || !service->has_rendered) return 0;
     const auto point = DocumentPoint(service, x, y);
     return service->doc->on_lbutton_up(point.x, point.y, x, y, IgnoreRedrawBox, activate_default != 0)
@@ -1223,18 +1278,21 @@ LITEHTML_API int litehtml_layout_on_mouse_up_ex(litehtml_layout_service* service
 
 LITEHTML_API int litehtml_layout_on_mouse_cancel(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_on_mouse_cancel");
     if(!service || !service->doc || !service->has_rendered) return 0;
     return service->doc->on_button_cancel(IgnoreRedrawBox) ? 1 : 0;
 }
 
 LITEHTML_API int litehtml_layout_on_mouse_leave(litehtml_layout_service* service)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_on_mouse_leave");
     if(!service || !service->doc || !service->has_rendered) return 0;
     return service->doc->on_mouse_leave(IgnoreRedrawBox) ? 1 : 0;
 }
 
 LITEHTML_API litehtml_layout_element* litehtml_layout_hit_test(litehtml_layout_service* service, float x, float y)
 {
+    lh_single_profile::scope trace("nativeApi", "litehtml_layout_hit_test");
     if(!service || !service->doc || !service->has_rendered || !service->doc->root_render()) return nullptr;
     const auto point = DocumentPoint(service, x, y);
     return MakeElementHandle(service, service->doc->root_render()->get_element_by_point(
