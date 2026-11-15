@@ -168,11 +168,21 @@ litehtml::rendered_width litehtml::render_item_block::_render(pixel_t x, pixel_t
                                                               formatting_context* fmt_ctx, bool second_pass)
 {
     containing_block_context self_size = calculate_containing_block_context(containing_block_size);
+    // Descendant percentages resolve against the content box. Keep the original
+    // height for this box's own sizing, which subtracts the border and padding later.
+    auto child_context = [&](containing_block_context context)
+    {
+        if(context.height.type != containing_block_context::cbc_value_type_auto)
+        {
+            context.height = std::max(0_px, context.height.value - box_sizing_height());
+        }
+        return context;
+    };
 
     //*****************************************
     // Render content
     //*****************************************
-    auto [ret_width, ret_min_width] = _render_content(x, y, second_pass, self_size, fmt_ctx);
+    auto [ret_width, ret_min_width] = _render_content(x, y, second_pass, child_context(self_size), fmt_ctx);
     //*****************************************
 
     if(src_el()->css().get_display() == display_list_item)
@@ -238,7 +248,7 @@ litehtml::rendered_width litehtml::render_item_block::_render(pixel_t x, pixel_t
             fmt_ctx->clear_floats(self_size.context_idx);
         }
 
-        _render_content(x, y, true, self_size.new_width(m_pos.width), fmt_ctx);
+        _render_content(x, y, true, child_context(self_size.new_width(m_pos.width)), fmt_ctx);
     }
 
     // Set block height

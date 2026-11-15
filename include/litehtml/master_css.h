@@ -71,7 +71,7 @@ center
 a:link
 {
 	text-decoration: underline;
-	color: #00f;
+	color: #0000ee;
 	cursor: pointer;
 }
 
@@ -164,7 +164,11 @@ hr {
 	margin-left: auto;
 	margin-right: auto;
 	border-style: inset;
-	border-width: 1px
+	border-width: 1px;
+	border-top-color: #9a9a9a;
+	border-left-color: #9a9a9a;
+	border-bottom-color: #eeeeee;
+	border-right-color: #eeeeee;
 }
 
 
@@ -334,7 +338,7 @@ option {
 
 input, textarea, keygen, select, button, isindex {
 	margin: 0em;
-	color: initial;
+	color: black;
 	line-height: normal;
 	text-transform: none;
 	text-indent: 0;
@@ -343,6 +347,20 @@ input, textarea, keygen, select, button, isindex {
 }
 input[type="hidden"] {
 	display: none;
+}
+input:not([type]), input[type="text"], input[type="password"], input[type="email"], input[type="tel"], input[type="url"] {
+	padding: 1px 2px;
+	border: 2px solid #767676;
+	background-color: white;
+}
+textarea {
+	padding: 2px;
+	border: 1px solid #767676;
+	background-color: white;
+}
+input:disabled, textarea:disabled {
+	border-color: #d2d2d2;
+	background-color: #f8f8f8;
 }
 select {
 	box-sizing: border-box;
@@ -353,6 +371,22 @@ input[type="checkbox"] {
 	width: 13px;
 	height: 13px;
 	margin: 3px 3px 3px 4px;
+}
+input[type="radio"] {
+	box-sizing: border-box;
+	width: 13px;
+	height: 13px;
+	margin: 3px 3px 0 5px;
+}
+
+canvas, progress, meter {
+	display: inline-block;
+}
+
+progress, meter {
+	width: 10em;
+	height: 1em;
+	vertical-align: middle;
 }
 
 

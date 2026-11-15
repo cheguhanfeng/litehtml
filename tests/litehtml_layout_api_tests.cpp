@@ -1731,8 +1731,38 @@ bool test_form_control_style_and_box_model()
     return passed;
 }
 
+static bool test_border_box_height_and_inline_replaced_geometry()
+{
+    litehtml_layout_callbacks callbacks{};
+    auto* service = litehtml_layout_create(&callbacks);
+    bool passed = expect(litehtml_layout_load_html(service,
+        "<div style='height:54px;width:110px;padding:9px;border:4px solid;box-sizing:border-box'>"
+        "<div id='child' style='height:100%;width:100%'></div></div>"
+        "<canvas id='canvas' style='width:150px;height:92px'></canvas>"
+        "<progress id='progress' style='width:132px;height:22px' value='.6'></progress>"
+        "<meter id='meter' style='width:132px;height:22px' value='.6'></meter>",
+        "", 800, 600), "replaced element and border-box fixture loads");
+    passed = expect(litehtml_layout_render(service, 800, litehtml_render_all), "fixture lays out") && passed;
+    const auto has_size = [&](const char* id, float width, float height)
+    {
+        auto* element = litehtml_layout_get_element_by_id(service, id);
+        litehtml_rect rect{};
+        const bool match = litehtml_layout_element_get_placement(element, &rect) &&
+                           rect.width == width && rect.height == height;
+        litehtml_layout_element_destroy(element);
+        return match;
+    };
+    passed = expect(has_size("child", 84, 28), "100% child fills the parent's content box") && passed;
+    passed = expect(has_size("canvas", 150, 92), "inline canvas has a paintable surface") && passed;
+    passed = expect(has_size("progress", 132, 22) && has_size("meter", 132, 22),
+                    "inline progress and meter have paintable boxes") && passed;
+    litehtml_layout_destroy(service);
+    return passed;
+}
+
 int main()
 {
+    if(!test_border_box_height_and_inline_replaced_geometry()) return EXIT_FAILURE;
     if(!test_form_control_style_and_box_model()) return EXIT_FAILURE;
     if(!test_parser_scratch_preserves_fragment_order()) return EXIT_FAILURE;
     return test_split_inline_link_hit_after_rebuild() && test_shared_background_layers_survive_style_moves() && test_variable_shorthand_expansion_and_refresh() && test_style_cascade_and_background_reset() && test_tag_index_mutation_lifecycle() && test_font_cache_key_property_isolation() && test_font_cache_reuses_handles_and_metrics() && test_mixed_block_inline_transfer_preserves_paint() && test_grid_inline_initializes_once() && test_parallel_rows_commit_differential() && test_flex_grid_container_placement_registration() && test_text_render_children_differential() && test_html_id_index_mutation_lifecycle() && test_full_render_and_dirty_geometry_validation() && test_plain_text_replacement_preserves_selector_matches() && test_rebuild_does_not_accumulate_render_references() && test_equal_size_numeric_text_replacement() && test_initial_base_url() && test_html_base_overrides_initial_url() &&
