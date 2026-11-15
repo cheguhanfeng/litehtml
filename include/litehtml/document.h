@@ -240,7 +240,7 @@ namespace litehtml
                            const std::shared_ptr<element>& child);
         void dump(dumper& cout);
 
-        // see doc/document_createFromString.txt
+        // see docs/en/guides/document_createFromString.en.md
         static document::ptr createFromString(const estring& str, document_container* container,
                                               const std::string& master_styles = litehtml::master_css,
                                               const std::string& user_styles   = {});

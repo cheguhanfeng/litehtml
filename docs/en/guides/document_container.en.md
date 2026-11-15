@@ -1,5 +1,7 @@
 # litehtml::document_container
 
+[简体中文](../../zh-CN/guides/document_container.zh-CN.md)
+
 ```litehtml::document_container``` class draws the HTML elements and perform some actions depended of the platform. This is the only class you should implement in your application.
 
 ```cpp

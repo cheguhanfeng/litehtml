@@ -8257,7 +8257,7 @@ namespace litehtml
     }
 
     // https://html.spec.whatwg.org/multipage/parsing.html#encoding-sniffing-algorithm
-    // see also doc/document_createFromString.txt
+    // see also docs/en/guides/document_createFromString.en.md
     void encoding_sniffing_algorithm(estring& str)
     {
         // 1. If the result of BOM sniffing is an encoding, return that encoding with confidence certain.

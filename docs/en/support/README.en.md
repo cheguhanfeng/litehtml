@@ -1,6 +1,8 @@
 # Litehtml support sources
 
-This folder contains source code that can help to integrate litehtml to the application.
+[简体中文](../../zh-CN/support/README.zh-CN.md)
+
+The [support directory](../../../support) contains source code that can help to integrate litehtml to the application.
 
 ## [gtkmm4] GTKMM4 Widget
 
@@ -155,7 +157,7 @@ virtual void on_page_loaded(uint64_t web_page_id);
 ```
 Notify about page was loaded and rendered
 
-### litebroeser::web_page
+### litebrowser::web_page
 
 A helper class for the web page. This class implements all required methods of the ```container_cairo_pango``` class. Also it implements ```std::enable_shared_from_this``` class;
 

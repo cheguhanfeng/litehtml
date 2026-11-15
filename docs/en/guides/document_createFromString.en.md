@@ -1,3 +1,7 @@
+# Input Encoding for document::createFromString
+
+[简体中文](../../zh-CN/guides/document_createFromString.zh-CN.md)
+
 ```cpp
 static document::ptr  document::createFromString(
 	const estring&       str,
@@ -6,7 +10,7 @@ static document::ptr  document::createFromString(
 	const string&        user_styles = "");
 ```
 
-### Terminology: 
+### Terminology:
 
 **BOM encoding** is the encoding suggested by the byte-order-mark (BOM). Can be UTF-8, UTF-16LE, or	UTF-16BE.
     Cannot be UTF-32 because it is not a valid HTML encoding. See bom_sniff.
@@ -27,7 +31,7 @@ valid <meta> charset tag:
 ---------------------------------------------------------------------------------------------------------
 
 
-### Call without specifying encoding: 
+### Call without specifying encoding:
 ```cpp
 createFromString(string, container);
 ```
@@ -55,7 +59,7 @@ createFromString({string, encoding::big5, confidence::tentative}, container)
 
 ---------------------------------------------------------------------------------------------------------
 
-User override encoding and HTTP encoding must be passed with confidence certain, if both are present user 
+User override encoding and HTTP encoding must be passed with confidence certain, if both are present user
 override encoding should take precedence.
 
 If both user override encoding and HTTP encoding are unspecified, your program may guess encoding by using

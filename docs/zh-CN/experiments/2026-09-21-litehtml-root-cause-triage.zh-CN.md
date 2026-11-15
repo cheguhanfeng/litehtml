@@ -1,5 +1,7 @@
 # LiteHTML 性能根因排查：批次 05
 
+[English](../../en/experiments/2026-09-21-litehtml-root-cause-triage.en.md)
+
 ## 边界
 
 只分析已有单轮数据与当前源码，不新增采样，不改生产算法。用户要求先证明真实问题、评估收益再修改；昂贵的约 1% 收益不值得。LiteHTMLView 是否已无空间不能先验确认，但此次排查重心为 LiteHTML。
