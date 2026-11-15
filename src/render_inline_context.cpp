@@ -363,6 +363,27 @@ void litehtml::render_item_inline_context::apply_vertical_align()
     }
 }
 
+litehtml::pixel_t litehtml::render_item_inline_context::empty_inline_baseline(bool first) const
+{
+    const char* tag = src_el()->get_tagName();
+    if(css().get_appearance() == appearance_checkbox)
+        return height() - margin_bottom();
+    if(tag)
+    {
+        const char* type = src_el()->get_attr("type", "text");
+        const bool text_input = t_strcasecmp(tag, "input") == 0 &&
+            (t_strcasecmp(type, "text") == 0 || t_strcasecmp(type, "password") == 0 ||
+             t_strcasecmp(type, "email") == 0 || t_strcasecmp(type, "search") == 0 ||
+             t_strcasecmp(type, "url") == 0 || t_strcasecmp(type, "tel") == 0);
+        if(text_input || t_strcasecmp(tag, "select") == 0)
+        {
+            const auto& font = css().get_font_metrics();
+            return content_offset_top() + (m_pos.height - font.height) / 2 + font.ascent;
+        }
+    }
+    return first ? height() - margin_bottom() : height();
+}
+
 litehtml::pixel_t litehtml::render_item_inline_context::get_first_baseline()
 {
     pixel_t bl;
@@ -372,7 +393,7 @@ litehtml::pixel_t litehtml::render_item_inline_context::get_first_baseline()
         bl               = line->bottom() - line->baseline() + content_offset_top();
     } else
     {
-        bl = height() - margin_bottom();
+        bl = empty_inline_baseline(true);
     }
     return bl;
 }
@@ -386,7 +407,7 @@ litehtml::pixel_t litehtml::render_item_inline_context::get_last_baseline()
         bl               = line->bottom() - line->baseline() + content_offset_top();
     } else
     {
-        bl = height();
+        bl = empty_inline_baseline(false);
     }
     return bl;
 }

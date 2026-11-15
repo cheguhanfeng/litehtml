@@ -344,6 +344,16 @@ input, textarea, keygen, select, button, isindex {
 input[type="hidden"] {
 	display: none;
 }
+select {
+	box-sizing: border-box;
+}
+input[type="checkbox"] {
+	appearance: checkbox;
+	box-sizing: border-box;
+	width: 13px;
+	height: 13px;
+	margin: 3px 3px 3px 4px;
+}
 
 
 article, aside, footer, header, hgroup, nav, section

@@ -1694,8 +1694,46 @@ bool test_parser_scratch_preserves_fragment_order()
     return passed;
 }
 
+bool test_form_control_style_and_box_model()
+{
+    callback_state state;
+    litehtml_layout_callbacks cb{};
+    cb.user = &state;
+    cb.create_font = capture_font;
+    cb.text_width = capture_text_width;
+    auto* service = litehtml_layout_create(&cb);
+    bool passed = expect(litehtml_layout_load_html(service,
+        "<style>input,select {width:40px;height:40px;padding:4px 10px;border:1px solid #123456;"
+        "font-size:20px;color:#20324b} #custom{appearance:none}</style>"
+        "<input id='check' type='checkbox'><input id='custom' type='checkbox'>"
+        "<select id='select'><option>Topic</option></select>", "", 400, 300) != 0, "form fixture loads");
+    passed = expect(litehtml_layout_render(service, 400, 0), "form fixture renders") && passed;
+    for(const char* id : {"check", "custom", "select"})
+    {
+        auto* node = litehtml_layout_get_element_by_id(service, id);
+        litehtml_control_style style{};
+        passed = expect(litehtml_layout_element_get_control_style(node, &style), "form style is accessible") && passed;
+        const bool native_checkbox = std::strcmp(id, "check") == 0;
+        const bool custom_checkbox = std::strcmp(id, "custom") == 0;
+        passed = expect(style.border_box.width == 40 && style.border_box.height == 40, "form border box honors size")
+            && expect(style.native_checkbox == native_checkbox, "appearance:none keeps author control paint") && passed;
+        if(custom_checkbox || native_checkbox)
+        {
+            litehtml_rect content{};
+            passed = expect(litehtml_layout_element_get_placement(node, &content) &&
+                content.width == (custom_checkbox ? 18 : 40), "author padding applies only to custom checkbox") && passed;
+        }
+        passed = expect(style.font && style.font_height == 24.f && style.color.r == 32 &&
+                        style.color.g == 50 && style.color.b == 75, "control uses computed text style") && passed;
+        litehtml_layout_element_destroy(node);
+    }
+    litehtml_layout_destroy(service);
+    return passed;
+}
+
 int main()
 {
+    if(!test_form_control_style_and_box_model()) return EXIT_FAILURE;
     if(!test_parser_scratch_preserves_fragment_order()) return EXIT_FAILURE;
     return test_split_inline_link_hit_after_rebuild() && test_shared_background_layers_survive_style_moves() && test_variable_shorthand_expansion_and_refresh() && test_style_cascade_and_background_reset() && test_tag_index_mutation_lifecycle() && test_font_cache_key_property_isolation() && test_font_cache_reuses_handles_and_metrics() && test_mixed_block_inline_transfer_preserves_paint() && test_grid_inline_initializes_once() && test_parallel_rows_commit_differential() && test_flex_grid_container_placement_registration() && test_text_render_children_differential() && test_html_id_index_mutation_lifecycle() && test_full_render_and_dirty_geometry_validation() && test_plain_text_replacement_preserves_selector_matches() && test_rebuild_does_not_accumulate_render_references() && test_equal_size_numeric_text_replacement() && test_initial_base_url() && test_html_base_overrides_initial_url() &&
                    test_viewport_fallback_drives_vh_layout() && test_render_clamps_scroll_after_content_shrinks() &&

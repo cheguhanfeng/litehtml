@@ -61,6 +61,8 @@ namespace litehtml
 
         pixel_t get_first_baseline() override;
         pixel_t get_last_baseline() override;
+    private:
+        pixel_t empty_inline_baseline(bool first) const;
     };
 } // namespace litehtml
 

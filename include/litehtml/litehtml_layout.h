@@ -402,6 +402,18 @@ LITEHTML_API litehtml_layout_element* litehtml_layout_element_get_parent(const l
 /* Border-box placement after litehtml_layout_render(). Returns 0 for an invalid
    element or before a document has been rendered. */
 LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_element* element, litehtml_rect* out_rect);
+
+/* Computed style for host-drawn controls. The font is the existing host callback handle. */
+typedef struct litehtml_control_style
+{
+    void*          font;
+    litehtml_color color;
+    float          font_height;
+    int            native_checkbox;
+    litehtml_rect  border_box;
+} litehtml_control_style;
+LITEHTML_API int litehtml_layout_element_get_control_style(const litehtml_layout_element* element,
+                                                          litehtml_control_style* out_style);
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html);
 /** Optional paint-only numeric replacement; 0 leaves DOM unchanged and requires normal fallback. */
 LITEHTML_API int litehtml_layout_element_try_replace_numeric_text(litehtml_layout_element* element, const char* text);

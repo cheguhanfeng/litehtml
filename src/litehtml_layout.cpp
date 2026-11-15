@@ -1129,6 +1129,23 @@ LITEHTML_API int litehtml_layout_element_get_placement(const litehtml_layout_ele
     return 1;
 }
 
+LITEHTML_API int litehtml_layout_element_get_control_style(const litehtml_layout_element* element,
+                                                          litehtml_control_style* out_style)
+{
+    if(!IsCurrentElement(element) || !element->service->has_rendered || !out_style) return 0;
+    const auto& css = element->element->css();
+    auto border_box = element->element->get_placement();
+    if(const auto item = element->element->get_render_item())
+    {
+        border_box += item->get_paddings();
+        border_box += item->get_borders();
+    }
+    *out_style = {reinterpret_cast<void*>(css.get_font()), ToCColor(css.get_color()),
+                  static_cast<float>(css.get_font_metrics().height),
+                  css.get_appearance() == litehtml::appearance_checkbox, ToCRect(border_box)};
+    return 1;
+}
+
 LITEHTML_API int litehtml_layout_element_set_inner_html(litehtml_layout_element* element, const char* html)
 {
     lh_single_profile::scope trace("nativeApi", "litehtml_layout_element_set_inner_html");

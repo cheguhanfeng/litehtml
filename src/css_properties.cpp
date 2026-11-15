@@ -23,6 +23,15 @@ void litehtml::css_properties::compute(const html_tag* el, const document::ptr& 
     m_clear = static_cast<element_clear>(el->get_property<int>(_clear_, false, clear_none, offset(m_clear)));
     m_appearance =
         static_cast<appearance>(el->get_property<int>(_appearance_, false, appearance_none, offset(m_appearance)));
+    if(m_appearance == appearance_auto || m_appearance == appearance_checkbox)
+    {
+        const char* tag = el->get_tagName();
+        const char* type = el->get_attr("type");
+        if(tag && type && t_strcasecmp(tag, "input") == 0 && t_strcasecmp(type, "checkbox") == 0)
+            m_appearance = appearance_checkbox;
+        else if(m_appearance == appearance_checkbox)
+            m_appearance = appearance_none;
+    }
     m_box_sizing = static_cast<box_sizing>(
         el->get_property<int>(_box_sizing_, false, box_sizing_content_box, offset(m_box_sizing)));
     m_overflow = static_cast<overflow>(el->get_property<int>(_overflow_, false, overflow_visible, offset(m_overflow)));
@@ -189,6 +198,14 @@ void litehtml::css_properties::compute(const html_tag* el, const document::ptr& 
     if(m_css_borders.bottom.style == border_style_none || m_css_borders.bottom.style == border_style_hidden)
     {
         m_css_borders.bottom.width = 0;
+    }
+
+    // Native checkbox chrome occupies the control box; input text padding and
+    // borders do not add to its dimensions.
+    if(m_appearance == appearance_checkbox)
+    {
+        m_css_padding = {};
+        m_css_borders = {};
     }
 
     snap_border_width(m_css_borders.left.width, doc);
